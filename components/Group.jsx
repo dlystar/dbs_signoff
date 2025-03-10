@@ -19,12 +19,6 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
     const unMountRef = useRef(false)
     useEffect(() => {
         if (type === 'testing') {
-            if(signOffType && signOffType.length > 0){
-                handleChangeTestingChange([{
-                    groupName: signOffType?.includes('UAT') ? 'SVP & Above' : 'HR Employee List',
-                    groupId: signOffType?.includes('UAT') ? uatGroupIds[0] : nUatGroupIds[0]
-                }])
-            }
             return setGroupIds(signOffType?.includes('UAT') ? uatGroupIds : nUatGroupIds)
         }
         if(signOffType?.includes('IDR Signoff')){
@@ -142,10 +136,8 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
         key.splice(2,1,'signOffUser')
         const namePath = key.map(i => isNaN(i) ? i : Number(i))
         onChange(val)
-        if(reset){
-            form.setFieldValue(namePath, undefined)
-            onValuesChange(row.name, 'signOffUserGroup', val)
-        }
+        form.setFieldValue(namePath, undefined)
+        onValuesChange(row.name, 'signOffUserGroup', val)
     }
 
     const getPopupContainer = (e) => {

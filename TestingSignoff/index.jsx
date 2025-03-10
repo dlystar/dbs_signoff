@@ -482,7 +482,7 @@ const Signoff = (props) => {
                                     const status = ['', null, undefined, 'New', 'Reopen']
                                     const disabled = !status.includes(crStatus)
                                     return <Form.Item name={[row.name, 'signOffType']} rules={[{ required: true, message: 'Please select Signoff Type' }]}>
-                                        <SignOffType row={row} disabled={formDisabled() || disabled} signoffTypeOptions={signoffTypeOptions} />
+                                        <SignOffType type="testing" row={row} disabled={formDisabled() || disabled} signoffTypeOptions={signoffTypeOptions} />
                                     </Form.Item>
                                 }
                             },
