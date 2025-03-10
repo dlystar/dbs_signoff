@@ -31,7 +31,7 @@ import { fieldValueChangeToValidateFields } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
 const OtherSignoff = (props) => {
 
-  const { formActions, schema, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
+  const { formActions, schema, baseActions, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
   const orderInfo = initData
   const [tableLoading, setTableLoading] = useState(false);
   const [form] = Form.useForm();
@@ -61,12 +61,14 @@ const OtherSignoff = (props) => {
     if (editableStatus.includes(crStatus) && !formDisabled()) {
       $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
         if(!formState.mounted) return
+        const baseValues = baseActions.getBaseValue()
         const _values = formatFormValues(schema, formState.values)
+        const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
         const tableData = form.getFieldValue('otherSignoff')
         if (initedRef.current) {
-          updateState({formData: _values})
+          updateState({formData: finilyValues})
           console.log('otherSignoff-value-change');
-          fieldChange(_values, tableData)
+          fieldChange(finilyValues, tableData)
         }
       });
     }
@@ -211,7 +213,7 @@ const OtherSignoff = (props) => {
         .catch(errors => {
           let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
           document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-          const error = errors.errorFields.map(item => {
+          const error = errors?.errorFields?.map(item => {
             return {
               name: item.name,
               messages: item.errors
@@ -380,6 +382,10 @@ const OtherSignoff = (props) => {
     }, 60)
     const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
     if (noArtifact) {
+      if(rowData?.signOffType?.[0] == 'Code Checker Signoff'){
+        window.prompt.error('Please upload artefact')
+        return
+      }
       return signoffSendEmail({ signOffId: rowData.id }).then(res => {
         window.prompt.success('Successfully send')
         getSignoffs()

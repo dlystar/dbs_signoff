@@ -37,7 +37,11 @@ export default ({ value, onChange, row, disabled, multiple, ...props }) => {
                     value: `${item.id}`
                 }
             })
-            setList(list.concat(newList))
+            if(currentPage == 1){
+                setList(newList)
+            }else{
+                setList(list.concat(newList))
+            }
             setLoading(false)
         }).catch(err => {
             setLoading(false)

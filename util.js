@@ -10,7 +10,7 @@ export const fieldValueChangeToValidateFields = (form, containerRef, type) => {
     }])
   }).catch(errors => {
     let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
-    const error = errors.errorFields.map(item => {
+    const error = errors?.errorFields?.map(item => {
       return {
         name: item.name,
         messages: item.errors

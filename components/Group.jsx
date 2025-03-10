@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Form4 as Form} from '@chaoswise/ui'
 import DoVisibleRange from '@/components/DoVisibleRange'
 import {getUserGroupByExactName} from '@/services/douc'
+import { helper } from '@/utils/T';
 const Group = ({value, onChange, row, disabled, type = 'testing', formActions, ...props}) => {
     const {uatGroupIds = [], nUatGroupIds = []} = window.DOSM_CUSTOM_DBS.signoff?.testingSignoff || {}
     const {arcCTAndEASREGroupIds = [], arcOtherGroupIds} = window.DOSM_CUSTOM_DBS.signoff?.heightenSignoff || {}
@@ -19,7 +20,7 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
     useEffect(() => {
         if (type === 'testing') {
             if(signOffType && signOffType.length > 0){
-                handleChange([{
+                handleChangeTestingChange([{
                     groupName: signOffType?.includes('UAT') ? 'SVP & Above' : 'HR Employee List',
                     groupId: signOffType?.includes('UAT') ? uatGroupIds[0] : nUatGroupIds[0]
                 }])
@@ -30,7 +31,6 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             setTimeout(() => {
                 FORM_ACTIONS.getFieldState('TechMDApproverGroup', state => {
                     const changeOptions = state?.props?.['x-props']?.changeOptions || []
-                    console.log('changeOptions', state?.props?.['x-props'])
                     setGroupIds(changeOptions.map(i => Number(i.groupId)))
                 })
             }, 200)
@@ -60,14 +60,14 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             handleChange([{
                 groupName: 'PSG_DBSGOV_DR',
                 groupId: DRteamGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(DRteamGroupIds)
         }
         if(signOffType?.includes('Storage team Signoff')){
             handleChange([{
                 groupName: 'PSG_DBSGOV_IMOSD',
                 groupId: StorageteamGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(StorageteamGroupIds)
         }
 
@@ -75,35 +75,35 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             handleChange([{
                 groupName: 'PSG_DBSGOV_DR_SIGNOFF',
                 groupId: HADRFlipGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(HADRFlipGroupIds)
         }
         if(signOffType?.includes('Data Center OPS (Batch) Signoff')){
             handleChange([{
                 groupName: 'PSG_DBSGOV_OSSCHED',
                 groupId: DataCenterOPSGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(DataCenterOPSGroupIds)
         }
         if(signOffType?.includes('Impact To Mainframe Signoff')){
             handleChange([{
                 groupName: 'PSG_DBSGOV_MF',
                 groupId: ImpactToMainframeGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(ImpactToMainframeGroupIds)
         }
         if(signOffType?.includes('Design For Data (D4D) Signoff')){
             handleChange([{
                 groupName: 'PSG_DBSGOV_D4D',
                 groupId: D4DGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(D4DGroupIds)
         }
         if(signOffType?.includes('BU/Application Owner Signoff')){
             handleChange([{
                 groupName: 'HR Employee List',
                 groupId: BUGroupIds[0]
-            }])
+            }], false)
             return setGroupIds(BUGroupIds)
         }
         if(signOffType?.includes('ARC Signoff')){
@@ -111,7 +111,7 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
                 handleChange([{
                     groupName: 'PSG_DBSGOV_ARC_EA',
                     groupId: arcCTAndEASREGroupIds[0]
-                }])
+                }], false)
                 return setGroupIds(arcCTAndEASREGroupIds)
             }else{
                 getUserGroupByExactName({
@@ -123,7 +123,7 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
                     handleChange([{
                         groupName: arcOtherGroupIds?.[0]?.groupName,
                         groupId: arcOtherGroupIds?.[0]?.groupId
-                    }])
+                    }], false)
                     setGroupIds([arcOtherGroupIds?.[0]?.groupId])
                 })
             }
@@ -133,15 +133,19 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             unMountRef.current = true
         }
     }, [type, signOffType, formData])
-    
-    const handleChange = (val) => {
+    const handleChangeTestingChange = helper.debounce((val) => {
+        handleChange(val, false)
+    },300)
+    const handleChange = (val, reset) => {
         // group类型变更，清空user
         const key = props.id.split('_').splice(1)
         key.splice(2,1,'signOffUser')
         const namePath = key.map(i => isNaN(i) ? i : Number(i))
-        form.setFieldValue(namePath, undefined)
         onChange(val)
-        onValuesChange(row.name, 'signOffUserGroup', val)
+        if(reset){
+            form.setFieldValue(namePath, undefined)
+            onValuesChange(row.name, 'signOffUserGroup', val)
+        }
     }
 
     const getPopupContainer = (e) => {

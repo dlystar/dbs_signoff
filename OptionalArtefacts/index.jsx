@@ -43,7 +43,7 @@ const OptionalArtefacts = (props) => {
         .catch(errors => {
           let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
           document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-          const error = errors.errorFields.map(item => {
+          const error = errors?.errorFields?.map(item => {
             return {
               name: item.name,
               messages: item.errors

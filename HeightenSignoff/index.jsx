@@ -22,7 +22,7 @@ import { fieldValueChangeToValidateFields } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
 const Signoff = (props) => {
 
-    const { formActions, schema, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
+    const { formActions, schema, baseActions, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
     const orderInfo = initData
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
@@ -52,12 +52,14 @@ const Signoff = (props) => {
         if (editableStatus.includes(crStatus) && !formDisabled()) {
             $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
                 if(!formState.mounted) return
+                const baseValues = baseActions.getBaseValue()
                 const _values = formatFormValues(schema, formState.values)
+                const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
                 const tableData = form.getFieldValue('heightenSignoff')
                 if (initedRef.current) {
-                    updateState({formData: _values})
-                    console.log('heightenSignoff-value-change', _values);
-                    fieldChange(_values, tableData)
+                    updateState({formData: finilyValues})
+                    console.log('heightenSignoff-value-change', finilyValues);
+                    fieldChange(finilyValues, tableData)
                 }
             });
         }
@@ -125,12 +127,12 @@ const Signoff = (props) => {
     // Manage ARC Signoff status in table and options
     const manageArcSignoff = (tableData, shouldInclude, newFormData) => {
         if (shouldInclude && !tableHasFormData('signOffType', 'ARC Signoff', tableData)) {
-            console.log(`heightenSignoff条件满足 新值:${newFormData} 旧值:${formDataRef.current}`);
+            console.log(`heightenSignoff条件满足 新值:lob:${newFormData.lob_value}cr classfication:${newFormData.crClassification_value} 旧值:lob:${formDataRef.current.lob_value}cr classfication:${formDataRef.current.crClassification_value}`);
             tableData.push(newRow('ARC Signoff'));
         } else if (!shouldInclude && tableHasFormData('signOffType', 'ARC Signoff', tableData)) {
             const tableIndex = tableData.findIndex(item => arrayIsEqual(item.signOffType, ['ARC Signoff']));
             if (tableIndex > -1) {
-                console.log(`heightenSignoff条件不满足 新值:${newFormData} 旧值:${formDataRef.current}`);
+                console.log(`heightenSignoff条件不满足 新值:lob:${newFormData.lob_value}cr classfication:${newFormData.crClassification_value} 旧值:lob:${formDataRef.current.lob_value}cr classfication:${formDataRef.current.crClassification_value}`);
                 tableData.splice(tableIndex, 1);
             }
         }
@@ -199,7 +201,7 @@ const Signoff = (props) => {
             .catch(errors => {
                 let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
                 document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-                const error = errors.errorFields.map(item => {
+                const error = errors?.errorFields?.map(item => {
                     return {
                         name: item.name,
                         messages: item.errors
@@ -327,12 +329,14 @@ const Signoff = (props) => {
         }, 60)
         const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
         if (noArtifact) {
-            return signoffSendEmail({ signOffId: rowData.id }).then(res => {
-                window.prompt.success('Successfully send')
-                getSignoffs()
-            }).catch(err => {
-                window.prompt.error(err.msg)
-            })
+            window.prompt.error('Please upload artefact')
+            return
+            // return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+            //     window.prompt.success('Successfully send')
+            //     getSignoffs()
+            // }).catch(err => {
+            //     window.prompt.error(err.msg)
+            // })
         }
         Modal.confirm({
             title: 'Declaration',

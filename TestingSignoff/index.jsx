@@ -23,7 +23,7 @@ import prompt from '@/utils/prompt';
 const { useFormEffects, LifeCycleTypes } = formily;
 
 const Signoff = (props) => {
-    const { formActions, schema, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
+    const { formActions, schema, baseActions, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
     const orderInfo = initData
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
@@ -54,11 +54,13 @@ const Signoff = (props) => {
         if(editableStatus.includes(crStatus) && !formDisabled()){
             $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
                 if(!formState.mounted) return
+                const baseValues = baseActions.getBaseValue()
                 const _values = formatFormValues(schema, formState.values)
-                const testingSignoff = form.getFieldValue('testingSignoff')
+                const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+                const tableData = form.getFieldValue('testingSignoff')
                 if (initedRef.current) {
-                    updateState({formData: _values})
-                    fieldChange(_values, testingSignoff)
+                    updateState({ formData: finilyValues })
+                    fieldChange(finilyValues, tableData)
                 }
             });
         }
@@ -191,7 +193,7 @@ const Signoff = (props) => {
             .catch(errors => {
                 let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
                 document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-                const error = errors.errorFields.map(item => {
+                const error = errors?.errorFields?.map(item => {
                     return {
                         name: item.name,
                         messages: item.errors
@@ -311,7 +313,7 @@ const Signoff = (props) => {
         } else {
             const rowData = {
                 status: "WAITSEND",
-                signOffType: JSON.stringify([signoffTypeOptions[0].value]),
+                signOffType: "[]",
                 signOffUserGroup: undefined,
                 signOffUser: undefined,
                 artifact: undefined,
@@ -346,7 +348,7 @@ const Signoff = (props) => {
         if (crStatus) {
             signoffUpdate({
                 ...rowData,
-                signOffUserGroup: JSON.stringify(rowData.signOffUserGroup),
+                signOffUserGroup: JSON.stringify(rowData.signOffUserGroup) || "[]",
                 signOffUser: JSON.stringify(rowData.signOffUser) || "[]",
                 artifact: JSON.stringify(rowData.artifact),
                 signOffType: JSON.stringify(rowData.signOffType),
@@ -381,12 +383,14 @@ const Signoff = (props) => {
         }, 60)
         const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
         if (noArtifact) {
-            return signoffSendEmail({ signOffId: rowData.id }).then(res => {
-                window.prompt.success('Successfully send')
-                getSignoffs()
-            }).catch(err => {
-                window.prompt.error(err.msg)
-            })
+            window.prompt.error('Please upload artefact')
+            return
+            // return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+            //     window.prompt.success('Successfully send')
+            //     getSignoffs()
+            // }).catch(err => {
+            //     window.prompt.error(err.msg)
+            // })
         }
         Modal.confirm({
             title: 'Declaration',

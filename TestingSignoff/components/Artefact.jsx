@@ -377,7 +377,7 @@ export default ({ value = [], onChange, row, disabled, ...props }) => {
             visible={viewVisible}
             title={<div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div>{currentViewFile.name}</div>
-                <Button style={{ marginRight: 50 }}><DownloadOutlined />Download</Button>
+                <Button style={{ marginRight: 50 }} onClick={() => download(currentViewFile)}><DownloadOutlined />Download</Button>
             </div>}
             width="98%"
             style={{ top: 20 }}
