@@ -33,6 +33,7 @@ const Signoff = (props) => {
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
     let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
     const editableStatus = ['', null, undefined, 'New', 'Reopen']
+    const formDataRef = useRef({})
     const formDisabled = () => {
         if (orderInfo.createdBy) {
             let userInfo = localStorage.getItem('dosm_loginInfo')
@@ -122,12 +123,16 @@ const Signoff = (props) => {
     };
 
     // Manage ARC Signoff status in table and options
-    const manageArcSignoff = (tableData, shouldInclude) => {
+    const manageArcSignoff = (tableData, shouldInclude, newFormData) => {
         if (shouldInclude && !tableHasFormData('signOffType', 'ARC Signoff', tableData)) {
+            console.log(`heightenSignoff条件满足 新值:${newFormData} 旧值:${formDataRef.current}`);
             tableData.push(newRow('ARC Signoff'));
         } else if (!shouldInclude && tableHasFormData('signOffType', 'ARC Signoff', tableData)) {
             const tableIndex = tableData.findIndex(item => arrayIsEqual(item.signOffType, ['ARC Signoff']));
-            if (tableIndex > -1) tableData.splice(tableIndex, 1);
+            if (tableIndex > -1) {
+                console.log(`heightenSignoff条件不满足 新值:${newFormData} 旧值:${formDataRef.current}`);
+                tableData.splice(tableIndex, 1);
+            }
         }
     };
 
@@ -164,13 +169,13 @@ const Signoff = (props) => {
             } else {
                 setTimeout(() => {
                     form.setFieldValue('heightenSignoff', tableData);
-                }, 60);
+                }, 300);
             }
 
         }
     };
 
-    const fieldChange = helper.debounce((formData, _tableData = [], _orderInfo, onlyUpdateOptions) => {
+    const fieldChange = helper.debounce((formData, _tableData = [], _orderInfo) => {
         let tableData = JSON.parse(JSON.stringify(_tableData || []));
         signoffTypes.forEach(signoffType => {
             const fieldValue = formData?.[signoffType.formKey];
@@ -178,10 +183,11 @@ const Signoff = (props) => {
                 signoffType.conditionValue.includes(fieldValue) &&
                 isValidLobForArcSignoff(formData?.lob_value);
             console.log('isArcSignoffRequired', isArcSignoffRequired, tableData);
-            manageArcSignoff(tableData, isArcSignoffRequired);
+            manageArcSignoff(tableData, isArcSignoffRequired, formData);
         });
         console.log('tableData', _tableData, tableData);
         updateFormData(tableData, _tableData);
+        formDataRef.current = formData
     }, 300)
 
     const onFormSubmit = () => {

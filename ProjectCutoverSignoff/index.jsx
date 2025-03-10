@@ -33,6 +33,7 @@ const Signoff = (props) => {
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
     let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
     const editableStatus = ['', null, undefined, 'New', 'Reopen']
+    const formDataRef = useRef({})
     const formDisabled = () => {
         if (orderInfo.createdBy) {
             let userInfo = localStorage.getItem('dosm_loginInfo')
@@ -128,8 +129,6 @@ const Signoff = (props) => {
         let newRows = []
         let deleteRows = []
         let updateRow = {}
-        console.log('formData?.changeGroup_value', formData);
-
         // Handle other signoff types
         signoffTypes.forEach(signoffType => {
             if (flatSchema[signoffType.formKey]) {
@@ -137,6 +136,7 @@ const Signoff = (props) => {
                 const name = key
                 const title = signoffType.signoffType
                 let formValue = formData?.[name];
+                let _value = signoffType.formKey + '_value'
                 let hasMatchingCondition = signoffType.conditionValue.includes(formValue)
                 if (signoffType.signoffType == 'BU/Application Owner Signoff') {
                     formValue = formData[key]
@@ -151,17 +151,21 @@ const Signoff = (props) => {
                             signOffUserGroup: formValue?.map(i => ({ groupId: i.groupId, groupName: i.groupName }))
                         }
                     }
+                    console.log(`projectCutoverSignoff-${title} 条件满足 新值:${formData[_value]} 旧值:${formDataRef.current[_value]}`);
                     tableData.push(row)
                     newRows.push(row)
                 }
                 if (tableHasFormData('signOffType', title, tableData) && signoffType.signoffType == 'BU/Application Owner Signoff') {
                     let index = tableData.findIndex(item => (item.signOffType && (item.signOffType[0] == signoffType.signoffType)))
-                    if (index > -1) tableData[index].signOffUser = formValue
+                    if (index > -1) {
+                        tableData[index].signOffUser = formValue
+                    }
                 }
                 // Check if the form data does not match the signoff condition value and if the table data already has a row with the same signoff type
                 if (!hasMatchingCondition && tableHasFormData('signOffType', title, tableData)) {
                     const index = tableData.findIndex(item => arrayIsEqual(item.signOffType, [title]))
                     if (index > -1) {
+                        console.log(`projectCutoverSignoff-${title} 条件不满足 新值:${formData[_value]} 旧值:${formDataRef.current[_value]}`);
                         let deleteRow = tableData.splice(index, 1)
                         deleteRows = deleteRows.concat(deleteRow.filter(i => i.id))
                     }
@@ -174,7 +178,7 @@ const Signoff = (props) => {
                     if (signoffType.signoffType == 'MD Delegate Signoff') {
                         const { MDDelegateGroups } = window.DOSM_CUSTOM_DBS.signoff?.projectCutoverSignoff
                         let groupId = MDDelegateGroups.find(item => item.groupName == formValue)?.groupId
-                        if (formValue && formValue != 'a5e7ec7e992245ef8ff8929024b9b75a' && groupId) {
+                        if (formValue && formValue != '03c1df481bec4849b7ab287336429b05' && groupId) {
                             groupValue = [{ groupId: groupId, groupName: formValue }]
                             userValue = []
                         } else {
@@ -235,6 +239,7 @@ const Signoff = (props) => {
                 }, 60)
             }
         }
+        formDataRef.current = formData
     }, 300)
 
     const onFormSubmit = () => {

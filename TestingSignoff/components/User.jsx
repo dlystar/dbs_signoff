@@ -44,8 +44,6 @@ export default ({ value, onChange, row, disabled, multiple, ...props }) => {
         })
     }
     useEffect(() => {
-        console.log('signOffUserGroup', props.id, signOffUserGroup);
-        
         if (signOffUserGroup?.[0]?.groupId) {
             hasMoreRef.current = true
             getUsers(signOffUserGroup?.[0]?.groupId, 1)

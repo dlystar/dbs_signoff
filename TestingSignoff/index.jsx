@@ -25,12 +25,10 @@ const { useFormEffects, LifeCycleTypes } = formily;
 const Signoff = (props) => {
     const { formActions, schema, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
     const orderInfo = initData
-    console.log('orderInfo', orderInfo);
-    
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
     const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = testingSignoffStore
-    const crStatus = orderInfo?.formData?.crStatus_value
+    const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value
     const containerRef = useRef()
     const initedRef = useRef(false)
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -59,7 +57,7 @@ const Signoff = (props) => {
                 const _values = formatFormValues(schema, formState.values)
                 const testingSignoff = form.getFieldValue('testingSignoff')
                 if (initedRef.current) {
-                    console.log('testingSignoff-value-change', _values);
+                    updateState({formData: _values})
                     fieldChange(_values, testingSignoff)
                 }
             });
@@ -184,8 +182,8 @@ const Signoff = (props) => {
                             messages: ''
                         }
                     ]
+                    reject(error)
                     window.prompt.error(`You need to get ${notTypes.join(',')} Signoff to submit CR.`)
-                    // reject(error)
                 } else {
                     resolve({ values })
                 }
@@ -236,11 +234,8 @@ const Signoff = (props) => {
             setTableLoading(false)
         })
     }
-    console.log('formData', formData);
-    
-    const fieldChange = (newFormData, _tableData, _orderInfo) => {
-        updateState({formData: newFormData})
-        console.log('value-compare', formDataRef?.current?.uat, newFormData.uat);
+
+    const fieldChange = helper.debounce((newFormData, _tableData, _orderInfo) => {
         const _signoffTypeOptions = []
         const tableData = JSON.parse(JSON.stringify(_tableData || []))
         let newRows = []
@@ -248,7 +243,7 @@ const Signoff = (props) => {
         signoffTypes.forEach(signoffType => {
             const title = signoffType.signoffType
             const name = signoffType.formKey
-            const name_value = name + '_value'
+            const _value = signoffType.formKey + '_value'
             // Check if the form data matches the signoff condition value and if the table data does not already have a row with the same signoff type
             // if (newFormData[name] && signoffType.conditionValue.includes(newFormData[name]) && !tableHasFormData('signOffType', title, tableData)) {
             //     newRows.push(newRow(title))
@@ -306,7 +301,7 @@ const Signoff = (props) => {
             }
         }
         formDataRef.current = newFormData
-    }
+    },300)
 
     const addRecord = () => {
         const tableData = form.getFieldValue('testingSignoff') || []

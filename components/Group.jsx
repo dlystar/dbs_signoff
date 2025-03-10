@@ -15,10 +15,11 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
     key.splice(2,1,'signOffType')
     const signOffType = Form.useWatch(key, form)    
     const FORM_ACTIONS =  window.FORM_ACTIONS ||  window.parent.FORM_ACTIONS
+    const unMountRef = useRef(false)
     useEffect(() => {
         if (type === 'testing') {
             if(signOffType && signOffType.length > 0){
-                onChange([{
+                handleChange([{
                     groupName: signOffType?.includes('UAT') ? 'SVP & Above' : 'HR Employee List',
                     groupId: signOffType?.includes('UAT') ? uatGroupIds[0] : nUatGroupIds[0]
                 }])
@@ -26,22 +27,16 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             return setGroupIds(signOffType?.includes('UAT') ? uatGroupIds : nUatGroupIds)
         }
         if(signOffType?.includes('IDR Signoff')){
-            if (formActions) {
-                const { getFieldState } = formActions || {};
-                getFieldState?.('TechMDApproverGroup', state => {
-                    const changeOptions = state?.props?.['x-props']?.changeOptions || []
-                    setGroupIds(changeOptions.map(i => Number(i.groupId)))
-                })
-            } else {
+            setTimeout(() => {
                 FORM_ACTIONS.getFieldState('TechMDApproverGroup', state => {
                     const changeOptions = state?.props?.['x-props']?.changeOptions || []
+                    console.log('changeOptions', state?.props?.['x-props'])
                     setGroupIds(changeOptions.map(i => Number(i.groupId)))
                 })
-            }
-            return setGroupIds(IDRGroupIds)
+            }, 200)
         }
         if(signOffType?.includes('ISS Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_ISS',
                 groupId: ISSGroupIds[0]
             }])
@@ -62,14 +57,14 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
             }
         }
         if(signOffType?.includes('DR team Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_DR',
                 groupId: DRteamGroupIds[0]
             }])
             return setGroupIds(DRteamGroupIds)
         }
         if(signOffType?.includes('Storage team Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_IMOSD',
                 groupId: StorageteamGroupIds[0]
             }])
@@ -77,35 +72,35 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
         }
 
         if(signOffType?.includes('HA & DR Flip Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_DR_SIGNOFF',
                 groupId: HADRFlipGroupIds[0]
             }])
             return setGroupIds(HADRFlipGroupIds)
         }
         if(signOffType?.includes('Data Center OPS (Batch) Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_OSSCHED',
                 groupId: DataCenterOPSGroupIds[0]
             }])
             return setGroupIds(DataCenterOPSGroupIds)
         }
         if(signOffType?.includes('Impact To Mainframe Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_MF',
                 groupId: ImpactToMainframeGroupIds[0]
             }])
             return setGroupIds(ImpactToMainframeGroupIds)
         }
         if(signOffType?.includes('Design For Data (D4D) Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'PSG_DBSGOV_D4D',
                 groupId: D4DGroupIds[0]
             }])
             return setGroupIds(D4DGroupIds)
         }
         if(signOffType?.includes('BU/Application Owner Signoff')){
-            onChange([{
+            handleChange([{
                 groupName: 'HR Employee List',
                 groupId: BUGroupIds[0]
             }])
@@ -113,7 +108,7 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
         }
         if(signOffType?.includes('ARC Signoff')){
             if(formData?.lob_value == 'CT' || formData?.lob_value == 'EASRE'){
-                onChange([{
+                handleChange([{
                     groupName: 'PSG_DBSGOV_ARC_EA',
                     groupId: arcCTAndEASREGroupIds[0]
                 }])
@@ -123,14 +118,19 @@ const Group = ({value, onChange, row, disabled, type = 'testing', formActions, .
                     licFeatures: '',
                     groupName: 'PSG_DBSGOV_ARC_' + formData?.lob_value,
                 }).then(res => {
+                    if(unMountRef.current) return
                     const arcOtherGroupIds = res?.data?.list || []
-                    onChange([{
+                    handleChange([{
                         groupName: arcOtherGroupIds?.[0]?.groupName,
                         groupId: arcOtherGroupIds?.[0]?.groupId
                     }])
                     setGroupIds([arcOtherGroupIds?.[0]?.groupId])
                 })
             }
+        }
+        unMountRef.current = false
+        return () => {
+            unMountRef.current = true
         }
     }, [type, signOffType, formData])
     

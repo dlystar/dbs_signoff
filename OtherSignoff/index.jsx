@@ -42,6 +42,7 @@ const OtherSignoff = (props) => {
   let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
   let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
   const editableStatus = ['', null, undefined, 'New', 'Reopen']
+  const formDataRef = useRef({})
   const formDisabled = () => {
     if (orderInfo.createdBy) {
       let userInfo = localStorage.getItem('dosm_loginInfo')
@@ -129,7 +130,6 @@ const OtherSignoff = (props) => {
   };
 
   const fieldChange = helper.debounce((formData, _tableData, _orderInfo, onlyUpdateOptions) => {
-    console.log('---formData---', formData)
     // const flatSchame = getFlatSchema(orderInfo?.schema || _orderInfo?.schema);
     const _signoffTypeOptions = JSON.parse(JSON.stringify(signoffTypeOptions));
     let tableData = JSON.parse(JSON.stringify(_tableData || []));
@@ -138,6 +138,7 @@ const OtherSignoff = (props) => {
     let deleteRows = []
     signoffTypes.forEach(signoffType => {
       const name = signoffType.formKey;
+      let _value = name + '_value'
       if (name) {
         let conditionTrue = formData[name] && signoffType.conditionValue.includes(formData[name]) && !tableHasFormData('signOffType', signoffType.signoffType, tableData)
         let conditionFalse = !signoffType.conditionValue.includes(formData[name]) && tableHasFormData('signOffType', signoffType.signoffType, tableData)
@@ -150,6 +151,7 @@ const OtherSignoff = (props) => {
           tableData.push(newRow(signoffType.signoffType));
           newRows.push(newRow(signoffType.signoffType))
           _signoffTypeOptions.push({ label: signoffType.signoffType, value: signoffType.signoffType });
+          console.log(`otherSignoff-${signoffType.signoffType} 条件满足 新值:${formData[_value]} 旧值:${formDataRef.current[_value]}`);
         }
         // Remove signoff type if condition is not met but type exists
         if (conditionFalse) {
@@ -157,13 +159,13 @@ const OtherSignoff = (props) => {
           if (index > -1) {
             let deleteRow = tableData.splice(index, 1)
             deleteRows = deleteRows.concat(deleteRow.filter(i => i.id))
+            console.log(`otherSignoff-${signoffType.signoffType} 条件不满足 新值:${formData[_value]} 旧值:${formDataRef.current[_value]}`);
           }
           const _index = _signoffTypeOptions.findIndex(i => i.value === signoffType.signoffType);
           if (_index > -1) _signoffTypeOptions.splice(_index, 1);
         }
       }
     });
-    console.log(`uniqBy(_signoffTypeOptions, 'value')`, _tableData, tableData)
     // Update options first, then form values
     if (!onlyUpdateOptions) {
       if (!arrayIsEqual(_tableData, tableData)) {
@@ -197,6 +199,7 @@ const OtherSignoff = (props) => {
         }
       }
     }
+    formDataRef.current = formData
   }, 300);
 
   const onFormSubmit = () => {

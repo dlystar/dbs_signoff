@@ -154,6 +154,12 @@ const IDRSignoff = (props) => {
         _tableData = []
       }
     }
+    if(shouldAdd){
+      console.log(`IDRSignoff 条件满足: 新值${formValues['IDRsignoff_value']}`);
+    }
+    if(shouldDel){
+      console.log(`IDRSignoff 条件不满足: 新值${formValues['IDRsignoff_value']}`);
+    }
     if (crStatus) {
       const rowData = form.getFieldValue('IDRSignoff')?.[0]
       if (shouldAdd) {
