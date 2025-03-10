@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import {CWTable, Form4 as Form, Space, Button, Modal, Checkbox, Input} from '@chaoswise/ui'
+import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input } from '@chaoswise/ui'
 import projectCutoverSignoffStore from './store';
 import { observer } from '@chaoswise/cw-mobx';
 import Status from '../TestingSignoff/components/Status';
@@ -9,24 +9,68 @@ import SignOffUserGroup from '../components/Group'
 import SignOffUser from '../TestingSignoff/components/User'
 import Artefact from '../TestingSignoff/components/Artefact'
 import uniqBy from 'lodash-es/uniqBy'
-import {signoffUpdate, signoffApproved, signoffRejected, signoffSendEmail, getSignOffListByWorkOrderId, signoffStatus, signoffInsertBatch, signoffDeleteBatch} from '../api'
+import { signoffUpdate, signoffApproved, signoffRejected, signoffSendEmail, getSignOffListByWorkOrderId, signoffStatus, signoffInsertBatch, signoffDeleteBatch } from '../api'
 import { getFlatSchema } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/FormEngine/FormRender/util/handleSchema';
 import { SIGNOFF_GROUP } from "../constants";
 import { helper } from '@/utils/T';
+import Button from '../components/TableButton'
+
+import { formily } from '@chaoswise/ui/formily';
+import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
+import { eventManager } from '@/utils/T/core/helper';
+import { fieldValueChangeToValidateFields } from '../util';
+const { useFormEffects, LifeCycleTypes } = formily;
 const Signoff = (props) => {
 
-    const { initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
-
+    const { formActions, schema, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
+    const orderInfo = initData
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
-    const {formData, updateState, orderInfo, signoffTypeOptions, setSignoffTypeOptions} = projectCutoverSignoffStore
+    const { formData, updateState, signoffTypeOptions, setSignoffTypeOptions } = projectCutoverSignoffStore
     const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value
     const containerRef = useRef()
     const initedRef = useRef(false)
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
     let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
-
+    const editableStatus = ['', null, undefined, 'New', 'Reopen']
+    const formDisabled = () => {
+        if (orderInfo.createdBy) {
+            let userInfo = localStorage.getItem('dosm_loginInfo')
+            userInfo = JSON.parse(userInfo)
+            if (userInfo.user.userId == orderInfo.createdBy) {
+                return false
+            } else {
+                return true
+            }
+        } else {
+            return false
+        }
+    }
+    useFormEffects(($, _) => {
+        // open状态以后，不再去同步表单和signoff的数据了 ---to do
+        if(editableStatus.includes(crStatus) && !formDisabled()){
+            $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
+                if(!formState.mounted) return
+                const _values = formatFormValues(schema, formState.values)
+                const tableData = form.getFieldValue('projectCutoverSignoff')
+                if (initedRef.current) {
+                    updateState({formData: _values})
+                    console.log('projectCutoverSignoff-value-change');
+                    fieldChange(_values, tableData)
+                }
+            });
+        }
+    });
     useEffect(() => {
+        setSignoffTypeOptions([
+            { label: 'CUS Signoff', value: 'CUS Signoff' },
+            { label: 'HA & DR Flip Signoff', value: 'HA & DR Flip Signoff' },
+            { label: 'Data Center OPS (Batch) Signoff', value: 'Data Center OPS (Batch) Signoff' },
+            { label: 'BU/Application Owner Signoff', value: 'BU/Application Owner Signoff' },
+            { label: 'Impact To Mainframe Signoff', value: 'Impact To Mainframe Signoff' },
+            { label: 'Design For Data (D4D) Signoff', value: 'Design For Data (D4D) Signoff' },
+            { label: 'MD Delegate Signoff', value: 'MD Delegate Signoff' },
+        ])
         if (initData) {
             onFormMount(initData)
         }
@@ -34,21 +78,20 @@ const Signoff = (props) => {
 
     useEffect(() => {
         registerOnChildFormSubmit && registerOnChildFormSubmit(onFormSubmit)
-        registerOnFormValuesChange && registerOnFormValuesChange(onFormValuesChange)
         registerOnOrderCreateSuccess && registerOnOrderCreateSuccess(onOrderCreateSuccess)
     })
 
     // Form changes will reset signoff approval status
     const shouldResetSignoff = (index, key, val) => {
-        const tableData = form.getFieldValue('projectCutoverSignoff')
+        let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[index]
         // When crStatus is new, changing user field
         // When crStatus is new, changing artefact field
-        if(crStatus && rowData.status != 'WAITSEND'){
-            if(key === 'signOffUser' && val){
+        if (crStatus && rowData.status != 'WAITSEND') {
+            if (key === 'signOffUser' && val) {
                 return true
             }
-            if(key === 'artifact' && val){
+            if (key === 'artifact' && val) {
                 return true
             }
             if (key === 'signOffUserGroup' && val) {
@@ -58,16 +101,16 @@ const Signoff = (props) => {
         return false
     }
     const arrayIsEqual = (arr1, arr2) => {
-        if(!Array.isArray(arr1) || !Array.isArray(arr2)) return false
+        if (!Array.isArray(arr1) || !Array.isArray(arr2)) return false
         return JSON.stringify(arr1) == JSON.stringify(arr2)
     }
     // These fields will affect the changes of signoff type dropdown options and values
     // signoffTypes are testing signoff types, used to correspond with form field codes
-    const {signoffTypes, skipSignoffType} = window.DOSM_CUSTOM_DBS.signoff.projectCutoverSignoff
+    const { signoffTypes, skipSignoffType } = window.DOSM_CUSTOM_DBS.signoff.projectCutoverSignoff
     const tableHasFormData = (key, value, tableData) => {
         return !!tableData.find(item => item[key]?.includes(value))
     }
-    const newRow = (signoffTypeValue)=> {
+    const newRow = (signoffTypeValue) => {
         const rowData = {
             status: "WAITSEND",
             signOffType: [signoffTypeValue],
@@ -81,7 +124,6 @@ const Signoff = (props) => {
 
     const fieldChange = helper.debounce((formData = {}, _tableData, _orderInfo, onlyUpdateOptions) => {
         const flatSchema = getFlatSchema(_orderInfo?.schema || orderInfo?.schema)
-        let _signoffTypeOptions = JSON.parse(JSON.stringify(signoffTypeOptions))
         let tableData = JSON.parse(JSON.stringify(_tableData || []))
         let newRows = []
         let deleteRows = []
@@ -90,73 +132,72 @@ const Signoff = (props) => {
 
         // Handle other signoff types
         signoffTypes.forEach(signoffType => {
-            if(flatSchema[signoffType.formKey]){
-                const {key} = flatSchema[signoffType.formKey]
+            if (flatSchema[signoffType.formKey]) {
+                const { key } = flatSchema[signoffType.formKey]
                 const name = key
                 const title = signoffType.signoffType
-                let formValue = formData?.[name];                
-                let hasMatchingCondition = signoffType.conditionValue.includes(formValue)                
-                if(signoffType.signoffType == 'BU/Application Owner Signoff'){
+                let formValue = formData?.[name];
+                let hasMatchingCondition = signoffType.conditionValue.includes(formValue)
+                if (signoffType.signoffType == 'BU/Application Owner Signoff') {
                     formValue = formData[key]
                     hasMatchingCondition = !!(formData[key]?.length > 0)
                 }
-                if(formValue && hasMatchingCondition && !tableHasFormData('signOffType', title, tableData)){
+                if (formValue && hasMatchingCondition && !tableHasFormData('signOffType', title, tableData)) {
                     let row = newRow(title)
-                    if(signoffType.signoffType == 'BU/Application Owner Signoff'){
+                    if (signoffType.signoffType == 'BU/Application Owner Signoff') {
                         row = {
                             ...row,
                             signOffUser: formValue,
-                            signOffUserGroup: formValue?.map(i => ({groupId: i.groupId, groupName: i.groupName}))
+                            signOffUserGroup: formValue?.map(i => ({ groupId: i.groupId, groupName: i.groupName }))
                         }
                     }
                     tableData.push(row)
                     newRows.push(row)
-                    _signoffTypeOptions.push({label: title, value: title})
                 }
-                if(tableHasFormData('signOffType', title, tableData) && signoffType.signoffType == 'BU/Application Owner Signoff'){
+                if (tableHasFormData('signOffType', title, tableData) && signoffType.signoffType == 'BU/Application Owner Signoff') {
                     let index = tableData.findIndex(item => (item.signOffType && (item.signOffType[0] == signoffType.signoffType)))
-                    if(index > -1) tableData[index].signOffUser = formValue
+                    if (index > -1) tableData[index].signOffUser = formValue
                 }
                 // Check if the form data does not match the signoff condition value and if the table data already has a row with the same signoff type
-                if(!hasMatchingCondition && tableHasFormData('signOffType', title, tableData)){
+                if (!hasMatchingCondition && tableHasFormData('signOffType', title, tableData)) {
                     const index = tableData.findIndex(item => arrayIsEqual(item.signOffType, [title]))
-                    if(index > -1) {
+                    if (index > -1) {
                         let deleteRow = tableData.splice(index, 1)
                         deleteRows = deleteRows.concat(deleteRow.filter(i => i.id))
                     }
-                    const _index = _signoffTypeOptions.findIndex(i => i.value === title)
-                    if(_index > -1) _signoffTypeOptions.splice(_index, 1);
                 }
 
-
-                if(formValue && hasMatchingCondition && tableHasFormData('signOffType', signoffType.signoffType, tableData)){
+                if (formValue && hasMatchingCondition && tableHasFormData('signOffType', signoffType.signoffType, tableData)) {
                     // When signOffType is MD Delegate Signoff, the group value is the group selected in MDDelegateSignOff
                     let groupValue = []
                     let userValue = []
-                    if(signoffType.signoffType == 'MD Delegate Signoff'){
-                        const {MDDelegateGroups} = window.DOSM_CUSTOM_DBS.signoff?.projectCutoverSignoff
-                        let groupId =  MDDelegateGroups.find(item => item.groupName == formValue)?.groupId
-                        if(formValue && formValue != '03c1df481bec4849b7ab287336429b05' && groupId){
-                            groupValue = [{groupId: groupId, groupName: formValue}]
+                    if (signoffType.signoffType == 'MD Delegate Signoff') {
+                        const { MDDelegateGroups } = window.DOSM_CUSTOM_DBS.signoff?.projectCutoverSignoff
+                        let groupId = MDDelegateGroups.find(item => item.groupName == formValue)?.groupId
+                        if (formValue && formValue != 'a5e7ec7e992245ef8ff8929024b9b75a' && groupId) {
+                            groupValue = [{ groupId: groupId, groupName: formValue }]
                             userValue = []
-                        }else{
-                            groupValue = [{groupId: '', groupName: 'Approver Same as CR MD Approver'}]
-                            userValue = [{userId: 'Approver Same as CR MD Approver', userName: 'Approver Same as CR MD Approver'}]
+                        } else {
+                            groupValue = [{ groupId: '', groupName: 'Approver Same as CR MD Approver' }]
+                            userValue = [{ userId: 'Approver Same as CR MD Approver', userName: 'Approver Same as CR MD Approver' }]
                         }
                         const index = tableData.findIndex(item => arrayIsEqual(item.signOffType, [signoffType.signoffType]))
-                        updateRow = {...tableData[index], signOffUserGroup: groupValue, signOffUser: userValue}
-                        tableData.splice(index, 1, updateRow)
-
+                        if (index > -1) {
+                            updateRow = { ...tableData[index], signOffUserGroup: groupValue, signOffUser: userValue }
+                            tableData.splice(index, 1, updateRow)
+                        }
                         const _index = newRows.findIndex(item => arrayIsEqual(item.signOffType, [signoffType.signoffType]))
-                        newRows.splice(_index, 1, updateRow)
+                        if (_index > -1) {
+                            newRows.splice(_index, 1, updateRow)
+                        }
                     }
                 }
             }
-        })        
-        if(!onlyUpdateOptions && !arrayIsEqual(_tableData, tableData)){
-            if(formData.crStatus || crStatus){
+        })
+        if (!onlyUpdateOptions && !arrayIsEqual(_tableData, tableData)) {
+            if (formData.crStatus || crStatus) {
                 if (deleteRows.length > 0) {
-                    signoffDeleteBatch(deleteRows.map(item => item.id)).then(res => {
+                    signoffDeleteBatch(deleteRows.map(item => item.id)).finally(() => {
                         getSignoffs()
                     })
                 }
@@ -177,7 +218,7 @@ const Signoff = (props) => {
                         getSignoffs()
                     })
                 }
-                if(updateRow.id){
+                if (updateRow.id) {
                     signoffUpdate({
                         ...updateRow,
                         signOffUserGroup: JSON.stringify(updateRow.signOffUserGroup),
@@ -188,37 +229,38 @@ const Signoff = (props) => {
                         getSignoffs()
                     })
                 }
-            }else{
+            } else {
                 setTimeout(() => {
                     form.setFieldValue('projectCutoverSignoff', tableData)
-                },60)
+                }, 60)
             }
         }
-    },300)
+    }, 300)
 
     const onFormSubmit = () => {
         return new Promise((resolve, reject) => {
-            form.validateFields().then(values => {resolve({ values })}).catch(errors =>{
-                // Form validation failed, send message to parent form
-                window.parent.postMessage({ eventType: 'onChildFormValidateError', errors: errors.errorFields }, '*')
-                // Form validation failed, scroll to the first error element
-                document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-                //! Note error format
-                // const error = [] 
-                const error = errors.errorFields.map(item => {
-                    return {
-                        name: item.name,
-                        messages: item.errors
-                    }
+            form.validateFields()
+                .then(values => { resolve({ values }) })
+                .catch(errors => {
+                    let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
+                    document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
+                    const error = errors.errorFields.map(item => {
+                        return {
+                            name: item.name,
+                            messages: item.errors
+                        }
+                    })
+                    return reject({
+                        tabKey: parentNodeId?.split('.$')?.[1],
+                        [SIGNOFF_GROUP.PROCUTOVER_SIGNOFF]: error
+                    })
                 })
-                return reject(error)
-            })
         })
     }
     const onOrderCreateSuccess = (workOrderId) => {
         // Insert data when crStatus is new
-        if(!crStatus){
-            const tableData = form.getFieldValue('projectCutoverSignoff')
+        if (!crStatus) {
+            let tableData = form.getFieldValue('projectCutoverSignoff') || []
             const params = tableData.map(item => {
                 return {
                     ...item,
@@ -232,71 +274,63 @@ const Signoff = (props) => {
                     workOrderId
                 }
             })
-            signoffInsertBatch(params)
+            if (params.length > 0) {
+                signoffInsertBatch(params)
+            }
         }
     }
+
     const onFormMount = (orderInfo) => {
-        const projectCutoverSignoff = form.getFieldValue('projectCutoverSignoff')
-        updateState({orderInfo})
-        fieldChange(orderInfo?.formData || {}, projectCutoverSignoff, orderInfo, true)
-        if(orderInfo.formData?.crStatus && !initedRef.current){
-            getSignoffs(orderInfo.formData, orderInfo.workOrderId)
+        updateState({ orderInfo })
+        if (orderInfo.formData?.crStatus && !initedRef.current) {
+            getSignoffs(orderInfo.workOrderId).finally(() => {
+                setTimeout(() => {
+                    // const tableData = form.getFieldValue('projectCutoverSignoff')
+                    // formActions.getFormState(formState => {
+                    //     const _values = formatFormValues(schema, formState.values)
+                    //     fieldChange(_values, tableData, orderInfo)
+                    // })
+                    initedRef.current = true
+                }, 0)
+            })
+        }
+        if (!crStatus && !initedRef.current) {
+            const tableData = form.getFieldValue('projectCutoverSignoff')
+            formActions.getFormState(formState => {
+                const _values = formatFormValues(schema, formState.values)
+                fieldChange(_values, tableData, orderInfo)
+            })
             initedRef.current = true
         }
     }
-    const onFormValuesChange = (formValues) => {
-        const projectCutoverSignoff = form.getFieldValue('projectCutoverSignoff')
-        fieldChange(formValues, projectCutoverSignoff)
-        updateState({formData: formValues})
-    }
 
-    const handleMessage = (event) => {
-        const {data} = event
-        switch (data.eventType) {
-            // Form initialization
-            case 'onFormMount':
-                onFormMount(data.orderInfo)
-                break;
-            // Form field change
-            case 'onFormValuesChange':
-                onFormValuesChange(data.values)
-                break;
-            // Form submission success
-            case 'onOrderCreateSuccess':
-                onOrderCreateSuccess(data.orderId)
-                break;
-            default:
-                console.log('Unhandled event type:', data.eventType);
-                break;
-        }
-    }
     const onValuesChange = (index, key, val) => {
-        const tableData = form.getFieldValue('projectCutoverSignoff')
+        let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[index]
-        if(crStatus){
+        if (crStatus) {
             signoffUpdate({
-                ...rowData, 
+                ...rowData,
                 signOffUserGroup: JSON.stringify(rowData.signOffUserGroup),
                 signOffUser: JSON.stringify(rowData.signOffUser) || "[]",
                 artifact: JSON.stringify(rowData.artifact),
                 signOffType: JSON.stringify(rowData.signOffType),
             }).then(res => {
                 // when CUS Signoff update the atrefact, set status to approved
-                if(crStatus && key === 'artifact' && rowData.signOffType.includes('CUS Signoff')){
-                    signoffStatus({signOffId: rowData.id, status: 'APPROVED'}).then(res => {
+                if (crStatus && key === 'artifact' && rowData.signOffType.includes('CUS Signoff')) {
+                    signoffStatus({ signOffId: rowData.id, status: 'APPROVED' }).then(res => {
                         getSignoffs()
                     }).catch(err => {
                         window.prompt.error(err.msg)
                     })
-                }else{
+                } else {
                     // Field value change, reset signoff task if necessary
-                    if(shouldResetSignoff(index, key, val)){
-                        signoffStatus({signOffId: rowData.id, status: 'WAITSEND'}).then(res => {
+                    if (shouldResetSignoff(index, key, val)) {
+                        signoffStatus({ signOffId: rowData.id, status: 'WAITSEND' }).then(res => {
                             getSignoffs()
                         }).catch(err => {
                             window.prompt.error(err.msg)
                         })
-                    }else{
+                    } else {
                         getSignoffs()
                     }
                 }
@@ -305,20 +339,20 @@ const Signoff = (props) => {
     }
     // Send email
     const sendEmail = (rowNum) => {
-        const tableData = form.getFieldValue('projectCutoverSignoff')
+        let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[rowNum]
         let clickable = false
         const onChange = (e) => {
             clickable = e.target.checked
-            if(e.target.checked){
+            if (e.target.checked) {
                 window.parent.sendEmail_button.removeAttribute('disabled')
-            }else{
+            } else {
                 window.parent.sendEmail_button.setAttribute('disabled', true)
             }
         }
         setTimeout(() => {
             window.parent.sendEmail_button.setAttribute('disabled', true)
-        },60)
+        }, 60)
         const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
         if (noArtifact) {
             return signoffSendEmail({ signOffId: rowData.id }).then(res => {
@@ -329,19 +363,19 @@ const Signoff = (props) => {
             })
         }
         Modal.confirm({
-            title: 'Delarrtion',
-            content: <span><Checkbox onChange={onChange} style={{marginRight: 10}} />I am fully responsible & accountable for all the artefacts uploaded and attest that it does not contain any customer, sensitive, or Pll data.</span>,
-            okButtonProps: {id: 'sendEmail_button'},
-            getContainer(){
-                const {inIframe} = window.DOSM_CUSTOM_DBS.signoff
-                if(inIframe){
+            title: 'Declaration',
+            content: <span><Checkbox onChange={onChange} style={{ marginRight: 10 }} />I am fully responsible & accountable for all the artefacts uploaded and attest that it does not contain any customer, sensitive, or PII data.</span>,
+            okButtonProps: { id: 'sendEmail_button' },
+            getContainer() {
+                const { inIframe } = window.DOSM_CUSTOM_DBS.signoff
+                if (inIframe) {
                     return window.parent?.document?.body
-                }else{
+                } else {
                     return document.body
                 }
             },
-            onOk(){
-                return signoffSendEmail({signOffId: rowData.id}).then(res => {
+            onOk() {
+                return signoffSendEmail({ signOffId: rowData.id }).then(res => {
                     window.prompt.success('Successfully send')
                     getSignoffs()
                 }).catch(err => {
@@ -352,9 +386,9 @@ const Signoff = (props) => {
     }
     // Approve
     const approval = (rowNum) => {
-        const tableData = form.getFieldValue('projectCutoverSignoff')
+        let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[rowNum]
-        signoffApproved({signOffId: rowData.id}).then(res => {
+        return signoffApproved({ signOffId: rowData.id }).then(res => {
             window.prompt.success('Approved')
             getSignoffs()
         }).catch(err => {
@@ -363,7 +397,7 @@ const Signoff = (props) => {
     }
     // Reject
     const reject = (rowNum) => {
-        const tableData = form.getFieldValue('projectCutoverSignoff')
+        let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[rowNum]
         let rejectionReason = ''
         const onChange = (e) => {
@@ -373,53 +407,32 @@ const Signoff = (props) => {
             title: 'Rejection Reason',
             icon: null,
             content: <div><Input.TextArea onChange={onChange} /></div>,
-            getContainer(){
-                const {inIframe} = window.DOSM_CUSTOM_DBS.signoff
-                if(inIframe){
+            getContainer() {
+                const { inIframe } = window.DOSM_CUSTOM_DBS.signoff
+                if (inIframe) {
                     return window.parent?.document?.body
-                }else{
+                } else {
                     return document.body
                 }
             },
-            onOk(){
-                return signoffRejected({signOffId: rowData.id, rejectionReason: rejectionReason}).then(res => {
+            onOk() {
+                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason }).then(res => {
                     window.prompt.success('Rejected')
                     getSignoffs()
                 }).catch(err => {
                     window.prompt.error(err.msg)
-                })      
+                })
             },
         })
     }
-    useEffect(() => {
-        window.parent.postMessage({
-            eventType: 'onChildFormInit',
-            height: containerRef.current.clientHeight
-        }, '*');
-        // Initialize global variables
-        window.formActions = {
-            submit: onFormSubmit,
-            // When the child form is hidden in the parent form, we need to get the child form values when submitting the parent form
-            getFieldsValue: () => {
-                return Promise.resolve({
-                    values: form.getFieldsValue()
-                })
-            }
-        }
-    },[])
-    // Message
-    useEffect(() => {
-        window.addEventListener('message', handleMessage);
-        return () => {
-            window.removeEventListener('message', handleMessage);
-        };
-    },[orderInfo, signoffTypeOptions, crStatus])
     // Get all signoff information for the current work order, filter projectCutoverSignoff
-    const getSignoffs = (formData, workOrderId) => {
-        setTableLoading(true)
+    const getSignoffs = (workOrderId) => {
         const orderId = orderInfo.workOrderId || workOrderId
-        const status = crStatus || formData?.crStatus_value
-        getSignOffListByWorkOrderId({workOrderId: orderId, signOffGroup: SIGNOFF_GROUP.PROCUTOVER_SIGNOFF}).then(res => {
+        if (!orderId) {
+            return new Promise((resolve, reject) => { resolve('') })
+        }
+        setTableLoading(true)
+        return getSignOffListByWorkOrderId({ workOrderId: orderId, signOffGroup: SIGNOFF_GROUP.PROCUTOVER_SIGNOFF }).then(res => {
             res = res?.data?.map(item => {
                 return {
                     ...item,
@@ -434,26 +447,13 @@ const Signoff = (props) => {
             let typeOptions = []
             projectCutoverSignoffData.forEach(i => {
                 typeOptions = typeOptions.concat(i.signOffType || [])
-            })            
+            })
             setTableLoading(false)
         }).catch(err => {
             setTableLoading(false)
         })
     }
 
-    const formDisabled = () => {
-        if(orderInfo.createdBy){
-            let userInfo = localStorage.getItem('dosm_loginInfo')
-            userInfo = JSON.parse(userInfo)
-            if(userInfo.user.userId == orderInfo.createdBy){
-                return false
-            }else{
-                return true
-            }
-        }else{
-            return false
-        }
-    }
 
     const isRestrictedSignoffType = (signOffType) => {
         return skipSignoffType?.includes(signOffType?.[0]);
@@ -464,19 +464,8 @@ const Signoff = (props) => {
         return isRestrictedSignoffType(rowData?.signOffType);
     }
 
-    useEffect(() => {
-        setSignoffTypeOptions([
-            {label: 'CUS Signoff', value: 'CUS Signoff'},
-            {label: 'HA & DR Flip Signoff', value: 'HA & DR Flip Signoff'},
-            {label: 'Data Center OPS (Batch) Signoff', value: 'Data Center OPS (Batch) Signoff'},
-            {label: 'BU/Application Owner Signoff', value: 'BU/Application Owner Signoff'},
-            {label: 'Impact To Mainframe Signoff', value: 'Impact To Mainframe Signoff'},
-            {label: 'Design For Data (D4D) Signoff', value: 'Design For Data (D4D) Signoff'},
-            {label: 'MD Delegate Signoff', value: 'MD Delegate Signoff'},
-        ])
-    },[])
     return <div className="projectCutoverSignoff" ref={containerRef}>
-        <Form form={form} name="signoff">
+        <Form form={form} name="signoff" onValuesChange={() => {fieldValueChangeToValidateFields(form, containerRef, SIGNOFF_GROUP.PROCUTOVER_SIGNOFF)}}>
             <Form.List name="projectCutoverSignoff">
                 {(fields, { add, remove }, { errors }) => {
                     return <CWTable
@@ -488,7 +477,7 @@ const Signoff = (props) => {
                                 key: 'status',
                                 index: 'status',
                                 width: '120px',
-                                render(text, row){
+                                render(text, row) {
                                     if (isRowRestricted(row)) {
                                         return null;
                                     }
@@ -498,86 +487,92 @@ const Signoff = (props) => {
                                 }
                             },
                             {
-                                title: <span><span style={{color: '#f5222d'}}>*</span>Signoff Type</span>,
+                                title: <span><span style={{ color: '#f5222d' }}>*</span>Signoff Type</span>,
                                 key: 'signoffType',
                                 index: 'signoffType',
                                 width: '300px',
-                                render(text, row){
+                                render(text, row) {
                                     return <Form.Item name={[row.name, 'signOffType']}>
                                         <SignOffType row={row} disabled={true} signoffTypeOptions={signoffTypeOptions} />
                                     </Form.Item>
                                 }
                             },
                             {
-                                title: <span><span style={{color: '#f5222d'}}>*</span>Group</span>,
+                                title: <span><span style={{ color: '#f5222d' }}>*</span>Group</span>,
                                 key: 'Group',
                                 index: 'Group',
                                 width: '200px',
-                                render(text, row){
+                                render(text, row) {
                                     if (isRowRestricted(row)) {
                                         return null;
                                     }
                                     const rowData = form.getFieldValue('projectCutoverSignoff')[row.name] || {};
-                                    const {signOffType, signOffUserGroup} = rowData
-                                    if(signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver'){
+                                    const { signOffType, signOffUserGroup } = rowData
+                                    if (signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver') {
                                         return null
                                     }
                                     const status = ['', null, undefined, 'New', 'Reopen']
-                                    const types = ['Impact To Mainframe Signoff', 'HA & DR Flip Signoff', 'Design For Data (D4D) Signoff', 'Data Center OPS (Batch) Signoff','MD Delegate Signoff','BU/Application Owner Signoff']
-                                    let disabled = !status.includes(crStatus)
-                                    if(crStatus == 'Open' && types.includes(signOffType?.[0])){
-                                        disabled = false
-                                    }
+                                    const types = ['Impact To Mainframe Signoff', 'HA & DR Flip Signoff', 'Design For Data (D4D) Signoff', 'Data Center OPS (Batch) Signoff', 'MD Delegate Signoff', 'BU/Application Owner Signoff']
+                                    // let disabled = !status.includes(crStatus)
+                                    // if (crStatus == 'Open' && types.includes(signOffType?.[0])) {
+                                    //     disabled = false
+                                    // }
+                                    // if (signOffType?.[0] == 'BU/Application Owner Signoff') {
+                                    //     disabled = true
+                                    // }
                                     return <Form.Item name={[row.name, 'signOffUserGroup']} rules={[{ required: true, message: 'Please select Group' }]}>
-                                        <SignOffUserGroup 
-                                            type="projectCutover" 
-                                            row={row} 
-                                            disabled={formDisabled() || disabled} 
+                                        <SignOffUserGroup
+                                            type="projectCutover"
+                                            row={row}
+                                            disabled={true}
                                         />
                                     </Form.Item>
                                 }
                             },
                             {
-                                title: <span><span style={{color: '#f5222d'}}>*</span>Signer</span>,
+                                title: <span><span style={{ color: '#f5222d' }}>*</span>Signer</span>,
                                 key: 'User',
                                 index: 'User',
                                 width: '200px',
-                                render(text, row){
+                                render(text, row) {
                                     if (isRowRestricted(row)) {
                                         return null;
                                     }
                                     const rowData = form.getFieldValue('projectCutoverSignoff')[row.name] || {};
-                                    const {signOffUserGroup, signOffType} = rowData
+                                    const { signOffUserGroup, signOffType } = rowData
                                     const status = ['', null, undefined, 'New', 'Reopen']
-                                    const types = ['Impact To Mainframe Signoff', 'HA & DR Flip Signoff', 'Design For Data (D4D) Signoff', 'Data Center OPS (Batch) Signoff','MD Delegate Signoff','BU/Application Owner Signoff']
+                                    const types = ['Impact To Mainframe Signoff', 'HA & DR Flip Signoff', 'Design For Data (D4D) Signoff', 'Data Center OPS (Batch) Signoff', 'MD Delegate Signoff', 'BU/Application Owner Signoff']
                                     let disabled = !status.includes(crStatus)
-                                    if(crStatus == 'Open' && types.includes(signOffType?.[0])){
+                                    if (crStatus == 'Open' && types.includes(signOffType?.[0])) {
                                         disabled = false
                                     }
-                                    if(signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver'){
+                                    if (signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver') {
+                                        disabled = true
+                                    }
+                                    if (signOffType?.[0] == 'BU/Application Owner Signoff') {
                                         disabled = true
                                     }
                                     return <Form.Item name={[row.name, 'signOffUser']} rules={[{ required: true, message: 'Please select User' }]}>
-                                        <SignOffUser 
-                                            type="projectCutover" 
-                                            row={row} 
+                                        <SignOffUser
+                                            type="projectCutover"
+                                            row={row}
                                             disabled={formDisabled() || disabled}
                                         />
                                     </Form.Item>
                                 }
                             },
                             {
-                                title: <span><span style={{color: '#f5222d'}}></span>Artefact</span>,
+                                title: <span><span style={{ color: '#f5222d' }}></span>Artefact</span>,
                                 key: 'artifact',
                                 width: '200px',
                                 index: 'artifact',
-                                render(text, row){
+                                render(text, row) {
                                     const rowData = form.getFieldValue('projectCutoverSignoff')[row.name] || {};
                                     const requiredTypes = ['CUS Signoff']
                                     let rule = []
-                                    if(requiredTypes.includes(rowData.signOffType?.[0])){
+                                    if (requiredTypes.includes(rowData.signOffType?.[0])) {
                                         rule = [{ required: true, message: 'Please upload artefact' }]
-                                    }else{
+                                    } else {
                                         rule = []
                                     }
                                     const status = ['', null, undefined, 'New', 'Reopen']
@@ -592,7 +587,7 @@ const Signoff = (props) => {
                                 key: 'rejectionReason',
                                 width: '200px',
                                 index: 'rejectionReason',
-                                render(text, row){
+                                render(text, row) {
                                     return <Form.Item name={[row.name, 'rejectionReason']}>
                                         <RejectionReason />
                                     </Form.Item>
@@ -602,25 +597,25 @@ const Signoff = (props) => {
                                 title: "Actions",
                                 key: 'actions',
                                 index: 'actions',
-                                width: '20%',
+                                width: '200px',
                                 fixed: 'right',
-                                render(text, row){
+                                render(text, row) {
                                     const rowData = form.getFieldValue('projectCutoverSignoff')[row.name] || {};
-                                    const {signOffUserGroup} = rowData
+                                    const { signOffUserGroup } = rowData
                                     const isRestricted = isRowRestricted(row);
                                     const approver = rowData.signOffUser?.[0]?.userId
                                     let userInfo = localStorage.getItem('dosm_loginInfo')
                                     userInfo = JSON.parse(userInfo)
                                     const currentUser = userInfo.user.userId
                                     const showSend = () => {
-                                        let show = crStatus && 
-                                        (rowData.status === 'WAITSEND' || rowData.status === 'REJECTED') && 
-                                        rowData.signOffType && 
-                                        (rowData.signOffUserGroup && rowData.signOffUserGroup?.length > 0) &&
-                                        (rowData.signOffUser && rowData.signOffUser?.length > 0) &&
-                                        currentUser == orderInfo.createdBy
+                                        let show = crStatus &&
+                                            (rowData.status === 'WAITSEND' || rowData.status === 'REJECTED') &&
+                                            rowData.signOffType &&
+                                            (rowData.signOffUserGroup && rowData.signOffUserGroup?.length > 0) &&
+                                            (rowData.signOffUser && rowData.signOffUser?.length > 0) &&
+                                            currentUser == orderInfo.createdBy
                                         // MD Delegate Signoff groupName is Approver Same as CR MD Approver, hide send button
-                                        if(signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver'){
+                                        if (signOffUserGroup?.[0]?.groupName === 'Approver Same as CR MD Approver') {
                                             show = false
                                         }
                                         return show
@@ -628,9 +623,9 @@ const Signoff = (props) => {
                                     return <Space>
                                         {
                                             rowData.status === 'PENDING' && currentUser == approver && crStatus &&
-                                            <Button 
-                                                type="primary" 
-                                                onClick={() => approval(row.name)} 
+                                            <Button
+                                                type="primary"
+                                                onClick={() => approval(row.name)}
                                                 disabled={isRestricted || !rowData?.signOffUser}
                                             >
                                                 Approve
@@ -638,9 +633,9 @@ const Signoff = (props) => {
                                         }
                                         {
                                             rowData.status === 'PENDING' && currentUser == approver &&
-                                            <Button 
-                                                danger 
-                                                onClick={() => reject(row.name)} 
+                                            <Button
+                                                danger
+                                                onClick={() => reject(row.name)}
                                                 disabled={isRestricted || !rowData?.signOffUser}
                                             >
                                                 Reject
@@ -648,9 +643,9 @@ const Signoff = (props) => {
                                         }
                                         {
                                             showSend() &&
-                                            <Button 
-                                                type="primary" 
-                                                onClick={() => sendEmail(row.name)} 
+                                            <Button
+                                                type="primary"
+                                                onClick={() => sendEmail(row.name)}
                                             >
                                                 Send
                                             </Button>
