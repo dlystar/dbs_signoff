@@ -106,7 +106,7 @@ const OptionalArtefacts = (props) => {
         onOrderCreateSuccess(data.orderId)
         break;
       default:
-        console.log('Unhandled event type:', data.eventType);
+        // console.log('Unhandled event type:', data.eventType);
         break;
     }
   };
