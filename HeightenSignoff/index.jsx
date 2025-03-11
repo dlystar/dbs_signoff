@@ -271,27 +271,6 @@ const Signoff = (props) => {
         }
     }
 
-    const handleMessage = (event) => {
-        const { data } = event
-        switch (data.eventType) {
-            // Form initialization
-            case 'onFormMount':
-                onFormMount(data.orderInfo)
-                break;
-            // Form field changes
-            case 'onFormValuesChange':
-                console.log('onFormValuesChange')
-                onFormValuesChange(data.values)
-                break;
-            // Form submission success
-            case 'onOrderCreateSuccess':
-                onOrderCreateSuccess(data.orderId)
-                break;
-            default:
-                console.log('Unhandled event type:', data.eventType);
-                break;
-        }
-    }
     const onValuesChange = (index, key, val) => {
         // Real-time update after work order creation
         const tableData = form.getFieldValue('heightenSignoff')

@@ -20,7 +20,6 @@ import { formily } from '@chaoswise/ui/formily';
 import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
 import { fieldValueChangeToValidateFields } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
-
 const Signoff = (props) => {
     const { formActions, schema, baseActions, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
     const orderInfo = initData
@@ -161,9 +160,7 @@ const Signoff = (props) => {
             }
         }
     }
-    const showError = (msg) => {
-        message.error(msg)
-    }
+
     const onFormSubmit = () => {
         return new Promise((resolve, reject) => {
             form.validateFields().then(values => {
@@ -189,8 +186,6 @@ const Signoff = (props) => {
                             messages: `You need to get ${notTypes.join(',')} Signoff to submit CR.`
                         }
                     ]
-                    const msg = `You need to get ${notTypes.join(',')} Signoff to submit CR.`
-                    showError(msg)
                     reject(error)
                 } else {
                     resolve({ values })

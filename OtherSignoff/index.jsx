@@ -277,30 +277,6 @@ const OtherSignoff = (props) => {
       initedRef.current = true
     }
   }
-  const onFormValuesChange = (formValues) => {
-    const otherSignoff = form.getFieldValue('otherSignoff') || [];
-    fieldChange(formValues, otherSignoff);
-    updateState({ formData: formValues });
-  }
-
-  const handleMessage = (event) => {
-    const { data } = event;
-    switch (data.eventType) {
-      case 'onFormMount':
-        onFormMount(data.orderInfo)
-        break;
-      case 'onFormValuesChange':
-        onFormValuesChange(data.values)
-        break;
-      // Form submission success
-      case 'onOrderCreateSuccess':
-        onOrderCreateSuccess(data.orderId)
-        break;
-      default:
-        console.log('Unhandled event type:', data.eventType);
-        break;
-    }
-  };
 
   // Get signoffs for the current work order
   const getSignoffs = (workOrderId) => {
@@ -466,30 +442,6 @@ const OtherSignoff = (props) => {
     }
   }
 
-  // Form and window message effects
-  useEffect(() => {
-    window.parent.postMessage({
-      eventType: 'onChildFormInit',
-      height: containerRef.current.clientHeight
-    }, '*');
-
-    window.formActions = {
-      submit: onFormSubmit,
-      getFieldsValue: () => {
-        return Promise.resolve({
-          values: form.getFieldsValue()
-        });
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener('message', handleMessage);
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
-  }, [orderInfo, signoffTypeOptions, crStatus]);
-
   useEffect(() => {
     setSignoffTypeOptions([
       {
@@ -647,9 +599,10 @@ const OtherSignoff = (props) => {
                       const rowData = tableData[row.name] || {}
                       let disabled = !['New', 'Reopen', undefined, '', null].includes(crStatus)
                       let rules = [{ required: true, message: 'Please upload artefact' }]
-                      const needArtefactSignoffs = ['DCON Signoff', 'Code Checker Signoff']
+                      const needArtefactSignoffs = ['DCON Signoff', 'Code Checker Signoff', 'Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff']
                       if (!needArtefactSignoffs.includes(rowData.signOffType?.[0])) {
                         rules = []
+                        return null
                       }
                       if (includes(rowData.signOffType, 'DCON Signoff', 'Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff') && ['New', 'Reopen', 'Approved'].includes(crStatus)) {
                         disabled = false

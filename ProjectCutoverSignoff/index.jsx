@@ -585,6 +585,7 @@ const Signoff = (props) => {
                                         rule = [{ required: true, message: 'Please upload artefact' }]
                                     } else {
                                         rule = []
+                                        return null
                                     }
                                     const status = ['', null, undefined, 'New', 'Reopen']
                                     const disabled = !status.includes(crStatus)
