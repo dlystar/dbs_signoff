@@ -47,14 +47,17 @@ const IDRSignoff = (props) => {
     if (editableStatus.includes(crStatus) && !formDisabled()) {
       $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
         if(!formState.mounted) return
-        const baseValues = baseActions.getBaseValue()
-        const _values = formatFormValues(schema, formState.values)
-        const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-        if (initedRef.current) {
-          updateState({formData: finilyValues})
-          console.log('IDRSignoff-value-change');
-          onFormValuesChange(finilyValues)
-        }
+        // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
+        setTimeout(() => {
+          const baseValues = baseActions.getBaseValue()
+          const _values = formatFormValues(schema, formState.values)
+          const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+          if (initedRef.current) {
+            updateState({formData: finilyValues})
+            console.log('IDRSignoff-value-change');
+            onFormValuesChange(finilyValues)
+          }
+        },60)
       });
     }
   });

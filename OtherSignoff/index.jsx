@@ -27,7 +27,7 @@ import Button from '../components/TableButton'
 import { formily } from '@chaoswise/ui/formily';
 import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
 import { eventManager } from '@/utils/T/core/helper';
-import { fieldValueChangeToValidateFields } from '../util';
+import { fieldValueChangeToValidateFields, getGroupDefaultValue } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
 const OtherSignoff = (props) => {
 
@@ -61,15 +61,18 @@ const OtherSignoff = (props) => {
     if (editableStatus.includes(crStatus) && !formDisabled()) {
       $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
         if(!formState.mounted) return
-        const baseValues = baseActions.getBaseValue()
-        const _values = formatFormValues(schema, formState.values)
-        const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-        const tableData = form.getFieldValue('otherSignoff')
-        if (initedRef.current) {
-          updateState({formData: finilyValues})
-          console.log('otherSignoff-value-change');
-          fieldChange(finilyValues, tableData)
-        }
+        // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
+        setTimeout(() => {
+          const baseValues = baseActions.getBaseValue()
+          const _values = formatFormValues(schema, formState.values)
+          const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+          const tableData = form.getFieldValue('otherSignoff')
+          if (initedRef.current) {
+            updateState({formData: finilyValues})
+            console.log('otherSignoff-value-change', finilyValues);
+            fieldChange(finilyValues, tableData)
+          }
+        },60)
       });
     }
   });
@@ -150,8 +153,10 @@ const OtherSignoff = (props) => {
         }
         // Add signoff type if condition is met and type doesn't exist
         if (conditionTrue) {
-          tableData.push(newRow(signoffType.signoffType));
-          newRows.push(newRow(signoffType.signoffType))
+          const row = newRow(signoffType.signoffType)
+          tableData.push(row);
+          newRows.push(row)
+          row.signOffUserGroup = getGroupDefaultValue([signoffType.signoffType], formData)
           _signoffTypeOptions.push({ label: signoffType.signoffType, value: signoffType.signoffType });
           console.log(`otherSignoff-${signoffType.signoffType} 条件满足 新值:${formData[_value]} 旧值:${formDataRef.current[_value]}`);
         }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input } from '@chaoswise/ui'
+import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input, message } from '@chaoswise/ui'
 import testingSignoffStore from './store';
 import { observer } from '@chaoswise/cw-mobx';
 import Status from './components/Status';
@@ -11,7 +11,7 @@ import Artefact from './components/Artefact'
 import { DeleteOutlined } from '@ant-design/icons';
 import uniqBy from 'lodash-es/uniqBy'
 import sortBy from 'lodash-es/sortBy'
-import { signoffInsertBatch, signoffUpdate, signoffApproved, signoffRejected, signoffSendEmail, getSignOffListByWorkOrderId, signoffStatus, signoffDeleteBatch } from '../api'
+import { signoffInsertBatch, signoffUpdate, signoffApproved, signoffRejected, signoffSendEmail, getSignOffListByWorkOrderId, signoffStatus, signoffDeleteBatch, signoffBatchUpdate } from '../api'
 import { PlusOutlined } from '@ant-design/icons';
 import { SIGNOFF_GROUP } from '../constants';
 import { helper } from '@/utils/T';
@@ -19,7 +19,6 @@ import Button from '../components/TableButton'
 import { formily } from '@chaoswise/ui/formily';
 import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
 import { fieldValueChangeToValidateFields } from '../util';
-import prompt from '@/utils/prompt';
 const { useFormEffects, LifeCycleTypes } = formily;
 
 const Signoff = (props) => {
@@ -54,14 +53,17 @@ const Signoff = (props) => {
         if(editableStatus.includes(crStatus) && !formDisabled()){
             $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
                 if(!formState.mounted) return
-                const baseValues = baseActions.getBaseValue()
-                const _values = formatFormValues(schema, formState.values)
-                const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-                const tableData = form.getFieldValue('testingSignoff')
-                if (initedRef.current) {
-                    updateState({ formData: finilyValues })
-                    fieldChange(finilyValues, tableData)
-                }
+                // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
+                setTimeout(() => {
+                    const baseValues = baseActions.getBaseValue()
+                    const _values = formatFormValues(schema, formState.values)
+                    const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+                    const tableData = form.getFieldValue('testingSignoff')
+                    if (initedRef.current) {
+                        updateState({ formData: finilyValues })
+                        fieldChange(finilyValues, tableData)
+                    }
+                },60)
             });
         }
     });
@@ -69,7 +71,7 @@ const Signoff = (props) => {
         if (!Array.isArray(arr1) || !Array.isArray(arr2)) return false
         return JSON.stringify(arr1) == JSON.stringify(arr2)
     }
-    const { signoffTypes } = window.DOSM_CUSTOM_DBS.signoff.testingSignoff
+    const { signoffTypes, uatGroupIds = [], nUatGroupIds = [] } = window.DOSM_CUSTOM_DBS.signoff.testingSignoff
     const tableHasFormData = (key, value, tableData) => {
         return !!tableData.find(item => item[key]?.includes(value))
     }
@@ -159,6 +161,9 @@ const Signoff = (props) => {
             }
         }
     }
+    const showError = (msg) => {
+        message.error(msg)
+    }
     const onFormSubmit = () => {
         return new Promise((resolve, reject) => {
             form.validateFields().then(values => {
@@ -167,7 +172,7 @@ const Signoff = (props) => {
                 const inputTypes = testingSignoff?.map(item => item.signOffType)?.flat() || []
                 let needTypes = []
                 signoffTypes.forEach(item => {
-                    if (item.conditionValue.includes(formData[item.formKey])) {
+                    if (item.conditionValue.includes(formDataRef.current[item.formKey])) {
                         needTypes.push(item.signoffType)
                     }
                 })
@@ -181,11 +186,12 @@ const Signoff = (props) => {
                     const error = [
                         {
                             name: 'testingSignoff',
-                            messages: ''
+                            messages: `You need to get ${notTypes.join(',')} Signoff to submit CR.`
                         }
                     ]
+                    const msg = `You need to get ${notTypes.join(',')} Signoff to submit CR.`
+                    showError(msg)
                     reject(error)
-                    window.prompt.error(`You need to get ${notTypes.join(',')} Signoff to submit CR.`)
                 } else {
                     resolve({ values })
                 }
@@ -242,6 +248,7 @@ const Signoff = (props) => {
         const tableData = JSON.parse(JSON.stringify(_tableData || []))
         let newRows = []
         let deleteRows = []
+        let updateRows = []
         signoffTypes.forEach(signoffType => {
             const title = signoffType.signoffType
             const name = signoffType.formKey
@@ -260,7 +267,20 @@ const Signoff = (props) => {
                 // }
                 tableData.forEach(item => {
                     if (item.signOffType && item.signOffType?.length > 0 && item.signOffType.includes(title)) {
-                        item.signOffType.splice(item.signOffType.findIndex(i => i == title), 1)
+                        item.signOffType.splice(item.signOffType.findIndex(i => i == title), 1)                        
+                        if(item.signOffType?.includes('UAT')){
+                            item.signOffUserGroup = [{
+                                groupId: uatGroupIds,
+                                groupName: 'SVP & Above'
+                            }]
+                        }else{
+                            item.signOffUserGroup = [{
+                                groupId: nUatGroupIds,
+                                groupName: 'HR Employee List'
+                            }]
+                            
+                        }                        
+                        updateRows.push(item)
                     }
                 })
             }
@@ -291,12 +311,29 @@ const Signoff = (props) => {
                         }
                     })))
                 }
+                if(updateRows.length > 0){
+                    updateRows.forEach(item => {
+                        fetchs.push(signoffUpdate({
+                            ...item,
+                            signOffUserGroup: JSON.stringify(item.signOffUserGroup),
+                            signOffUser: JSON.stringify(item.signOffUser),
+                            artifact: JSON.stringify(item.artifact),
+                            signOffType: JSON.stringify(item.signOffType),
+                            signOffGroup: SIGNOFF_GROUP.TESTING_SIGNOFF,
+                            topAccountId,
+                            accountId,
+                            workOrderId: orderInfo.workOrderId
+                        }))
+                    })
+                }
                 if (fetchs.length > 0) {
                     Promise.all(fetchs).finally(() => {
                         getSignoffs()
                     })
                 }
             }else{
+                console.log('tableData', tableData);
+                
                 setTimeout(() => {
                     form.setFieldValue('testingSignoff', tableData)
                 }, 60)

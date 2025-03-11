@@ -18,7 +18,7 @@ import Button from '../components/TableButton'
 import { formily } from '@chaoswise/ui/formily';
 import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
 import { eventManager } from '@/utils/T/core/helper';
-import { fieldValueChangeToValidateFields } from '../util';
+import { fieldValueChangeToValidateFields, getGroupDefaultValue } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
 const Signoff = (props) => {
 
@@ -52,15 +52,18 @@ const Signoff = (props) => {
         if(editableStatus.includes(crStatus) && !formDisabled()){
             $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
                 if(!formState.mounted) return
-                const baseValues = baseActions.getBaseValue()
-                const _values = formatFormValues(schema, formState.values)
-                const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-                const tableData = form.getFieldValue('projectCutoverSignoff')
-                if (initedRef.current) {
-                    updateState({formData: finilyValues})
-                    console.log('projectCutoverSignoff-value-change');
-                    fieldChange(finilyValues, tableData)
-                }
+                // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
+                setTimeout(() => {
+                    const baseValues = baseActions.getBaseValue()
+                    const _values = formatFormValues(schema, formState.values)
+                    const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+                    const tableData = form.getFieldValue('projectCutoverSignoff')
+                    if (initedRef.current) {
+                        updateState({formData: finilyValues})
+                        console.log('projectCutoverSignoff-value-change');
+                        fieldChange(finilyValues, tableData)
+                    }
+                },60)
             });
         }
     });
@@ -146,6 +149,7 @@ const Signoff = (props) => {
                 }
                 if (formValue && hasMatchingCondition && !tableHasFormData('signOffType', title, tableData)) {
                     let row = newRow(title)
+                    row.signOffUserGroup = getGroupDefaultValue([title], formData)
                     if (signoffType.signoffType == 'BU/Application Owner Signoff') {
                         row = {
                             ...row,

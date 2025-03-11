@@ -18,7 +18,7 @@ import Button from '../components/TableButton'
 import { formily } from '@chaoswise/ui/formily';
 import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
 import { eventManager } from '@/utils/T/core/helper';
-import { fieldValueChangeToValidateFields } from '../util';
+import { fieldValueChangeToValidateFields, getArcGroupDefaultValue } from '../util';
 const { useFormEffects, LifeCycleTypes } = formily;
 const Signoff = (props) => {
 
@@ -52,15 +52,18 @@ const Signoff = (props) => {
         if (editableStatus.includes(crStatus) && !formDisabled()) {
             $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
                 if(!formState.mounted) return
-                const baseValues = baseActions.getBaseValue()
-                const _values = formatFormValues(schema, formState.values)
-                const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-                const tableData = form.getFieldValue('heightenSignoff')
-                if (initedRef.current) {
-                    updateState({formData: finilyValues})
-                    console.log('heightenSignoff-value-change', finilyValues);
-                    fieldChange(finilyValues, tableData)
-                }
+                // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
+                setTimeout(() => {
+                    const baseValues = JSON.parse(JSON.stringify(baseActions.getBaseValue() || {}))
+                    const _values = formatFormValues(schema, formState.values)
+                    const finilyValues = { ...(_values || {}), ...(baseValues || {})}
+                    const tableData = form.getFieldValue('heightenSignoff')
+                    if (initedRef.current) {
+                        updateState({formData: finilyValues})
+                        console.log('heightenSignoff-value-change', finilyValues);
+                        fieldChange(finilyValues, tableData)
+                    }
+                },60)
             });
         }
     });
@@ -121,7 +124,8 @@ const Signoff = (props) => {
     // Check if LOB value meets ARC Signoff conditions
     const isValidLobForArcSignoff = (lob) => {
         const lobValue = Array.isArray(lob) ? lob[0] : lob;
-        return lobValue && !["ISS", "CES", "TS"].some(prefix => lobValue?.startsWith(prefix));
+        // CES TS ISS
+        return lobValue && !['b7750f1ceacf4fc28df4dec4b1fd8af9', '123c781dae434ceeafdfa1264575853c', '45eb96d75c5e4c02b8898265423a2326'].some(prefix => lobValue?.startsWith(prefix));
     };
 
     // Manage ARC Signoff status in table and options
@@ -139,7 +143,10 @@ const Signoff = (props) => {
     };
 
     // Update form data
-    const updateFormData = (tableData, _tableData) => {
+    const updateFormData = async(tableData, _tableData, formData) => {
+        if(tableData.length > 0){
+            tableData[0].signOffUserGroup = await getArcGroupDefaultValue(tableData[0].signOffType, formData)
+        }
         if (!arrayIsEqual(_tableData, tableData)) {
             if (crStatus) {
                 let deleteRows = tableData.length < _tableData.length ? _tableData : []
@@ -183,12 +190,12 @@ const Signoff = (props) => {
             const fieldValue = formData?.[signoffType.formKey];
             const isArcSignoffRequired = fieldValue &&
                 signoffType.conditionValue.includes(fieldValue) &&
-                isValidLobForArcSignoff(formData?.lob_value);
+                isValidLobForArcSignoff(formData?.lob);
             console.log('isArcSignoffRequired', isArcSignoffRequired, tableData);
             manageArcSignoff(tableData, isArcSignoffRequired, formData);
         });
         console.log('tableData', _tableData, tableData);
-        updateFormData(tableData, _tableData);
+        updateFormData(tableData, _tableData, formData);
         formDataRef.current = formData
     }, 300)
 
@@ -227,8 +234,7 @@ const Signoff = (props) => {
                     initedRef.current = true
                 }, 0)
             })
-        }
-        if (!crStatus && !initedRef.current) {
+        }else{
             const tableData = form.getFieldValue('heightenSignoff')
             formActions.getFormState(formState => {
                 const _values = formatFormValues(schema, formState.values)
