@@ -27,7 +27,7 @@ const Signoff = (props) => {
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
     const { formData, updateState, signoffTypeOptions, setSignoffTypeOptions } = projectCutoverSignoffStore
-    const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value
+    const crStatus = orderInfo?.formData?.crStatus_value
     const containerRef = useRef()
     const initedRef = useRef(false)
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -207,7 +207,7 @@ const Signoff = (props) => {
         if (!onlyUpdateOptions && !arrayIsEqual(_tableData, tableData)) {
             if (formData.crStatus || crStatus) {
                 if (deleteRows.length > 0) {
-                    signoffDeleteBatch(deleteRows.map(item => item.id)).finally(() => {
+                    signoffDeleteBatch(deleteRows.map(item => item.id), orderInfo.workOrderId).finally(() => {
                         getSignoffs()
                     })
                 }
@@ -226,6 +226,8 @@ const Signoff = (props) => {
                         }
                     })).then(() => {
                         getSignoffs()
+                    }).catch(() => {
+                        getSignoffs()
                     })
                 }
                 if (updateRow.id) {
@@ -236,6 +238,8 @@ const Signoff = (props) => {
                         artifact: JSON.stringify(updateRow.artifact),
                         signOffType: JSON.stringify(updateRow.signOffType),
                     }).then(res => {
+                        getSignoffs()
+                    }).catch(() => {
                         getSignoffs()
                     })
                 }
@@ -328,7 +332,7 @@ const Signoff = (props) => {
             }).then(res => {
                 // when CUS Signoff update the atrefact, set status to approved
                 if (crStatus && key === 'artifact' && rowData.signOffType.includes('CUS Signoff')) {
-                    signoffStatus({ signOffId: rowData.id, status: 'APPROVED' }).then(res => {
+                    signoffStatus({ signOffId: rowData.id, status: 'APPROVED', workOrderId: rowData.workOrderId }).then(res => {
                         getSignoffs()
                     }).catch(err => {
                         window.prompt.error(err.msg)
@@ -336,7 +340,7 @@ const Signoff = (props) => {
                 } else {
                     // Field value change, reset signoff task if necessary
                     if (shouldResetSignoff(index, key, val)) {
-                        signoffStatus({ signOffId: rowData.id, status: 'WAITSEND' }).then(res => {
+                        signoffStatus({ signOffId: rowData.id, status: 'WAITSEND', workOrderId: rowData.workOrderId }).then(res => {
                             getSignoffs()
                         }).catch(err => {
                             window.prompt.error(err.msg)
@@ -345,6 +349,8 @@ const Signoff = (props) => {
                         getSignoffs()
                     }
                 }
+            }).catch(() => {
+                getSignoffs()
             })
         }
     }
@@ -366,7 +372,7 @@ const Signoff = (props) => {
         }, 60)
         const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
         if (noArtifact) {
-            return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+            return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
                 window.prompt.success('Successfully send')
                 getSignoffs()
             }).catch(err => {
@@ -386,7 +392,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+                return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Successfully send')
                     getSignoffs()
                 }).catch(err => {
@@ -399,7 +405,7 @@ const Signoff = (props) => {
     const approval = (rowNum) => {
         let tableData = form.getFieldValue('projectCutoverSignoff')
         const rowData = tableData[rowNum]
-        return signoffApproved({ signOffId: rowData.id }).then(res => {
+        return signoffApproved({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
             window.prompt.success('Approved')
             getSignoffs()
         }).catch(err => {
@@ -427,7 +433,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason }).then(res => {
+                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Rejected')
                     getSignoffs()
                 }).catch(err => {

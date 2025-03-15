@@ -27,7 +27,7 @@ const Signoff = (props) => {
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
     const { formData, updateState, signoffTypeOptions, setSignoffTypeOptions } = heightenSignoffStore
-    const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value
+    const crStatus = orderInfo?.formData?.crStatus_value
     const containerRef = useRef()
     const initedRef = useRef(false)
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -152,7 +152,7 @@ const Signoff = (props) => {
                 let deleteRows = tableData.length < _tableData.length ? _tableData : []
                 let newRows = tableData.length < _tableData.length ? [] : tableData
                 if (deleteRows.length > 0) {
-                    signoffDeleteBatch(deleteRows.map(item => item.id)).then(res => {
+                    signoffDeleteBatch(deleteRows.map(item => item.id), orderInfo.workOrderId).then(res => {
                         getSignoffs()
                     }).catch(err => {
                         getSignoffs()
@@ -172,6 +172,8 @@ const Signoff = (props) => {
                             workOrderId: orderInfo.workOrderId
                         }
                     })).then(() => {
+                        getSignoffs()
+                    }).catch(err => {
                         getSignoffs()
                     })
                 }
@@ -285,7 +287,7 @@ const Signoff = (props) => {
             }).then(res => {
                 // Field value changes, involving resetting signoff tasks, reset signoff tasks
                 if (shouldResetSignoff(index, key, val)) {
-                    signoffStatus({ signOffId: rowData.id, status: 'WAITSEND' }).then(res => {
+                    signoffStatus({ signOffId: rowData.id, status: 'WAITSEND', workOrderId: rowData.workOrderId }).then(res => {
                         getSignoffs()
                     }).catch(err => {
                         window.prompt.error(err.msg)
@@ -293,6 +295,8 @@ const Signoff = (props) => {
                 } else {
                     getSignoffs()
                 }
+            }).catch(() => {
+                getSignoffs()
             })
         }
     }
@@ -314,14 +318,12 @@ const Signoff = (props) => {
         }, 60)
         const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
         if (noArtifact) {
-            window.prompt.error('Please upload artefact')
-            return
-            // return signoffSendEmail({ signOffId: rowData.id }).then(res => {
-            //     window.prompt.success('Successfully send')
-            //     getSignoffs()
-            // }).catch(err => {
-            //     window.prompt.error(err.msg)
-            // })
+            return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
+                window.prompt.success('Successfully send')
+                getSignoffs()
+            }).catch(err => {
+                window.prompt.error(err.msg)
+            })
         }
         Modal.confirm({
             title: 'Declaration',
@@ -336,7 +338,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+                return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Successfully send')
                     getSignoffs()
                 }).catch(err => {
@@ -349,7 +351,7 @@ const Signoff = (props) => {
     const approval = (rowNum) => {
         const tableData = form.getFieldValue('heightenSignoff')
         const rowData = tableData[rowNum]
-        return signoffApproved({ signOffId: rowData.id }).then(res => {
+        return signoffApproved({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
             window.prompt.success('Approved')
             getSignoffs()
         }).catch(err => {
@@ -377,7 +379,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason }).then(res => {
+                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Rejected')
                     getSignoffs()
                 }).catch(err => {
@@ -477,6 +479,7 @@ const Signoff = (props) => {
                                 width: '200px',
                                 index: 'artifact',
                                 render(text, row) {
+                                    return null
                                     const status = ['', null, undefined, 'New', 'Reopen']
                                     const disabled = !status.includes(crStatus)
                                     return <Form.Item name={[row.name, 'artifact']}>

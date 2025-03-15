@@ -16,7 +16,7 @@ const OptionalArtefacts = (props) => {
   const [tableLoading, setTableLoading] = useState(false);
   const [form] = Form.useForm();
   const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = optionalArtefactsStore;
-  const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value;
+  const crStatus = orderInfo?.formData?.crStatus_value;
   const containerRef = useRef();
   const initedRef = useRef(false)
   let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -178,6 +178,7 @@ const OptionalArtefacts = (props) => {
         signOffGroup: SIGNOFF_GROUP.OPTIONAL_ARTEFACTS,
         topAccountId,
         accountId,
+        status: 'APPROVED',
       }
       tableData.push(rowData)
       form.setFieldValue('optionalArtefacts', tableData)
@@ -190,8 +191,11 @@ const OptionalArtefacts = (props) => {
         signOffGroup: SIGNOFF_GROUP.OPTIONAL_ARTEFACTS,
         topAccountId,
         accountId,
+        status: 'APPROVED',
       }
-      signoffInsertBatch([{ ...rowData, workOrderId: orderInfo.workOrderId }], false).then(res => {
+      signoffInsertBatch([{ ...rowData, workOrderId: orderInfo.workOrderId }]).then(res => {
+        getSignoffs()
+      }).catch(() => {
         getSignoffs()
       })
     }
@@ -202,7 +206,9 @@ const OptionalArtefacts = (props) => {
     } else {
       const tableData = form.getFieldValue('optionalArtefacts') || []
       const deleteRow = tableData[Number(row.name)]
-      return signoffDeleteBatch([deleteRow.id]).then(res => {
+      return signoffDeleteBatch([deleteRow.id], orderInfo.workOrderId).then(res => {
+        getSignoffs()
+      }).catch(err => {
         getSignoffs()
       })
     }
@@ -220,6 +226,8 @@ const OptionalArtefacts = (props) => {
         artifact: JSON.stringify(rowData.artifact),
         signOffType: JSON.stringify(rowData.signOffType),
       }).then(res => {
+        getSignoffs()
+      }).catch(() => {
         getSignoffs()
       })
     }

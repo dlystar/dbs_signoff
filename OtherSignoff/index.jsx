@@ -36,7 +36,7 @@ const OtherSignoff = (props) => {
   const [tableLoading, setTableLoading] = useState(false);
   const [form] = Form.useForm();
   const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = otherSignoffStore;
-  const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value;
+  const crStatus = orderInfo?.formData?.crStatus_value;  
   const containerRef = useRef();
   const initedRef = useRef(false)
   let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -178,7 +178,7 @@ const OtherSignoff = (props) => {
       if (!arrayIsEqual(_tableData, tableData)) {
         if (formData.crStatus || crStatus) {
           if (deleteRows.length > 0) {
-            signoffDeleteBatch(deleteRows.map(item => item.id)).then(res => {
+            signoffDeleteBatch(deleteRows.map(item => item.id), orderInfo.workOrderId).finally(() => {
               getSignoffs()
             })
           }
@@ -196,6 +196,8 @@ const OtherSignoff = (props) => {
                 workOrderId: orderInfo.workOrderId
               }
             })).then(() => {
+              getSignoffs()
+            }).catch(() => {
               getSignoffs()
             })
           }
@@ -254,27 +256,35 @@ const OtherSignoff = (props) => {
     }
   }
 
+  const triggerChange = (tableData) => {
+    if(editableStatus.includes(crStatus) && !formDisabled()){
+      formActions.getFormState(formState => {
+        const baseValues = baseActions.getBaseValue()
+        const _values = formatFormValues(schema, formState.values)
+        const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+        fieldChange(finilyValues, tableData, orderInfo)
+      })
+    }
+    initedRef.current = true
+  }
+
   const onFormMount = (orderInfo) => {
     updateState({ orderInfo })
     if (orderInfo.formData?.crStatus && !initedRef.current) {
-      getSignoffs(orderInfo.workOrderId).finally(() => {
-        setTimeout(() => {
-          // const tableData = form.getFieldValue('otherSignoff')
-          // formActions.getFormState(formState => {
-          //   const _values = formatFormValues(schema, formState.values)
-          //   fieldChange(_values, tableData, orderInfo)
-          // })
-          initedRef.current = true
-        }, 0)
+      getSignoffs(orderInfo.workOrderId).then((tableData) => {
+        triggerChange(tableData)
+      }).catch(err => {
+        triggerChange([])
       })
     }
     if (!crStatus && !initedRef.current) {
       const tableData = form.getFieldValue('otherSignoff')
       formActions.getFormState(formState => {
+        const baseValues = baseActions.getBaseValue()
         const _values = formatFormValues(schema, formState.values)
-        fieldChange(_values, tableData, orderInfo)
+        const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
+        fieldChange(finilyValues, tableData, orderInfo)
       })
-      initedRef.current = true
     }
   }
 
@@ -282,10 +292,11 @@ const OtherSignoff = (props) => {
   const getSignoffs = (workOrderId) => {
     const orderId = orderInfo.workOrderId || workOrderId
     if (!orderId) {
-      return new Promise((resolve, reject) => { resolve('') })
+      return new Promise((resolve, reject) => { resolve([]) })
     }
     setTableLoading(true)
-    return getSignOffListByWorkOrderId({ workOrderId: orderId, signOffGroup: SIGNOFF_GROUP.OTHER_SIGNOFFS, })
+    return new Promise((resolve, reject) => {
+      getSignOffListByWorkOrderId({ workOrderId: orderId, signOffGroup: SIGNOFF_GROUP.OTHER_SIGNOFFS, })
       .then(res => {
         let data = res?.data?.map(item => ({
           ...item,
@@ -298,17 +309,20 @@ const OtherSignoff = (props) => {
         const otherSignoffData = data?.filter(i => i.signOffGroup === SIGNOFF_GROUP.OTHER_SIGNOFFS);
         form.setFieldValue('otherSignoff', sortBy(otherSignoffData, 'id'));
         setTableLoading(false);
+        resolve(otherSignoffData)
       })
       .catch(err => {
         setTableLoading(false);
         console.error(err);
+        reject([])
       });
+    })
   };
 
   const approval = (rowNum) => {
     const tableData = form.getFieldValue('otherSignoff');
     const rowData = tableData[rowNum];
-    return signoffApproved({ signOffId: rowData.id }).then(res => {
+    return signoffApproved({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
       window.prompt.success('Approved');
       getSignoffs();
     }).catch(err => {
@@ -336,7 +350,7 @@ const OtherSignoff = (props) => {
         }
       },
       onOk() {
-        return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason }).then(res => {
+        return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason, workOrderId: rowData.workOrderId }).then(res => {
           window.prompt.success('Rejected')
           getSignoffs()
         }).catch(err => {
@@ -367,7 +381,7 @@ const OtherSignoff = (props) => {
         window.prompt.error('Please upload artefact')
         return
       }
-      return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+      return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
         window.prompt.success('Successfully send')
         getSignoffs()
       }).catch(err => {
@@ -387,7 +401,7 @@ const OtherSignoff = (props) => {
         }
       },
       onOk() {
-        return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+        return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
           console.log('res', res);
           window.prompt.success('Successfully send')
           getSignoffs()
@@ -414,7 +428,7 @@ const OtherSignoff = (props) => {
       }).then(res => {
         let signOffType = rowData?.signOffType?.[0]
         if (crStatus && key === 'artifact' && ['Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'DCON Signoff', 'Implementation Checker Signoff'].includes(signOffType)) {
-          signoffStatus({ signOffId: rowData.id, status: 'APPROVED' }).then(res => {
+          signoffStatus({ signOffId: rowData.id, status: 'APPROVED', workOrderId: rowData.workOrderId }).then(res => {
             getSignoffs()
           }).catch(err => {
             window.prompt.error(err.msg)
@@ -422,7 +436,7 @@ const OtherSignoff = (props) => {
         } else {
           // If the field value changes and involves resetting the signoff task, reset the signoff task
           if (shouldResetSignoff(index, key, val)) {
-            signoffStatus({ signOffId: rowData.id, status: 'WAITSEND' }).then(res => {
+            signoffStatus({ signOffId: rowData.id, status: 'WAITSEND', workOrderId: rowData.workOrderId }).then(res => {
               getSignoffs()
             }).catch(err => {
               window.prompt.error(err.msg)
@@ -598,17 +612,17 @@ const OtherSignoff = (props) => {
                       const tableData = form.getFieldValue('otherSignoff');
                       const rowData = tableData[row.name] || {}
                       let disabled = !['New', 'Reopen', undefined, '', null].includes(crStatus)
-                      let rules = [{ required: true, message: 'Please upload artefact' }]
-                      const needArtefactSignoffs = ['DCON Signoff', 'Code Checker Signoff', 'Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff']
-                      if (!needArtefactSignoffs.includes(rowData.signOffType?.[0])) {
-                        rules = []
-                        return null
-                      }
-                      if (includes(rowData.signOffType, 'DCON Signoff', 'Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff') && ['New', 'Reopen', 'Approved'].includes(crStatus)) {
-                        disabled = false
-                        if (crStatus == 'Approved') {
-                          rules = [{ required: true, message: 'Please upload artefact' }]
+                      let rules = []
+                      let needArtefactSignoffs = ['DCON Signoff', 'Code Checker Signoff']
+                      let shoowArtefactSignoffs = ['Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff']
+                      if(crStatus == 'Approved'){
+                        needArtefactSignoffs = [...needArtefactSignoffs, ...shoowArtefactSignoffs]
+                        if(shoowArtefactSignoffs.includes(rowData.signOffType?.[0])){
+                          disabled = false
                         }
+                      }
+                      if (needArtefactSignoffs.includes(rowData.signOffType?.[0])) {                        
+                        rules = [{ required: true, message: 'Please upload artefact' }]
                       }
 
                       if (includes(rowData.signOffType, 'Technical Live Verification (LV) Signoff', 'Business Live Verification (LV) Signoff', 'Implementation Checker Signoff')) {
@@ -622,11 +636,7 @@ const OtherSignoff = (props) => {
                         if (!Implementation_Time || !Implementation_Time?.startDate) {
                           disabled = true
                         }
-                      }
-
-                      if (['New', 'Reopen', undefined, '', null, 'Open'].includes(crStatus) && needArtefactSignoffs.includes(rowData.signOffType?.[0])) {
-                        disabled = false
-                      }
+                      }                      
                       return <Form.Item
                         name={[row.name, 'artifact']}
                         rules={rules}

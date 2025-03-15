@@ -26,7 +26,7 @@ const Signoff = (props) => {
     const [tableLoading, setTableLoading] = useState(false)
     const [form] = Form.useForm();
     const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = testingSignoffStore
-    const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value
+    const crStatus = orderInfo?.formData?.crStatus_value
     const containerRef = useRef()
     const initedRef = useRef(false)
     let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -120,14 +120,17 @@ const Signoff = (props) => {
         if (orderInfo.formData?.crStatus && !initedRef.current) {
             getSignoffs(orderInfo.formData, orderInfo.workOrderId, true)
             .finally(() => {
-                setTimeout(() => {
-                    const testingSignoff = form.getFieldValue('testingSignoff')
-                    formActions.getFormState(formState => {
-                        const _values = formatFormValues(schema, formState.values)
-                        fieldChange(_values, testingSignoff, orderInfo)
-                    })
-                    initedRef.current = true
-                }, 0)
+                // 工单创建人才需要
+                if(editableStatus.includes(crStatus) && !formDisabled()){
+                    setTimeout(() => {
+                        const testingSignoff = form.getFieldValue('testingSignoff')
+                        formActions.getFormState(formState => {
+                            const _values = formatFormValues(schema, formState.values)
+                            fieldChange(_values, testingSignoff, orderInfo)
+                        })
+                        initedRef.current = true
+                    }, 0)
+                }
             })
         } else if (!orderInfo.formData?.crStatus && !initedRef.current) {
             const testingSignoff = form.getFieldValue('testingSignoff')
@@ -270,11 +273,12 @@ const Signoff = (props) => {
                             }]
                         }else{
                             item.signOffUserGroup = [{
-                                groupId: nUatGroupIds,
+                                groupId: nUatGroupIds[0],
                                 groupName: 'HR Employee List'
                             }]
                             
-                        }                        
+                        }         
+                        console.log(`testingSignoff-${title} 条件不满足 新值:${newFormData[_value]} 旧值:${formDataRef.current?.[_value]}`);
                         updateRows.push(item)
                     }
                 })
@@ -289,7 +293,7 @@ const Signoff = (props) => {
             if (newFormData.crStatus || crStatus) {
                 let fetchs = []
                 if (deleteRows.length > 0) {
-                    fetchs.push(signoffDeleteBatch(deleteRows.map(item => item.id)))
+                    fetchs.push(signoffDeleteBatch(deleteRows.map(item => item.id)), orderInfo.workOrderId)
                 }
                 if (newRows.length > 0) {
                     fetchs.push(signoffInsertBatch(newRows.map(item => {
@@ -351,7 +355,9 @@ const Signoff = (props) => {
                 artifact: undefined,
                 signOffGroup: 'TestingSignoff'
             }
-            signoffInsertBatch([{ ...rowData, workOrderId: orderInfo.workOrderId }], false).then(res => {
+            signoffInsertBatch([{ ...rowData, workOrderId: orderInfo.workOrderId }]).then(res => {
+                getSignoffs()
+            }).catch(() => {
                 getSignoffs()
             })
         }
@@ -362,7 +368,9 @@ const Signoff = (props) => {
         } else {
             const tableData = form.getFieldValue('testingSignoff') || []
             const deleteRow = tableData[Number(row.name)]
-            return signoffDeleteBatch([deleteRow.id]).then(res => {
+            return signoffDeleteBatch([deleteRow.id], orderInfo.workOrderId).then(res => {
+                getSignoffs()
+            }).catch(err => {
                 getSignoffs()
             })
         }
@@ -386,7 +394,7 @@ const Signoff = (props) => {
                 signOffType: JSON.stringify(rowData.signOffType),
             }).then(res => {
                 if (shouldResetSignoff(index, key, val)) {
-                    signoffStatus({ signOffId: rowData.id, status: 'WAITSEND' }).then(res => {
+                    signoffStatus({ signOffId: rowData.id, status: 'WAITSEND', workOrderId: rowData.workOrderId }).then(res => {
                         getSignoffs()
                     }).catch(err => {
                         window.prompt.error(err.msg)
@@ -394,6 +402,8 @@ const Signoff = (props) => {
                 } else {
                     getSignoffs()
                 }
+            }).catch(() => {
+                getSignoffs()
             })
         }
     }
@@ -417,7 +427,7 @@ const Signoff = (props) => {
         if (noArtifact) {
             window.prompt.error('Please upload artefact')
             return
-            // return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+            // return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
             //     window.prompt.success('Successfully send')
             //     getSignoffs()
             // }).catch(err => {
@@ -437,7 +447,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffSendEmail({ signOffId: rowData.id }).then(res => {
+                return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Successfully send')
                     getSignoffs()
                 }).catch(err => {
@@ -449,7 +459,7 @@ const Signoff = (props) => {
     const approval = (rowNum) => {
         const tableData = form.getFieldValue('testingSignoff')
         const rowData = tableData[rowNum]
-        return signoffApproved({ signOffId: rowData.id }).then(res => {
+        return signoffApproved({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
             window.prompt.success('Approved')
             getSignoffs()
         }).catch(err => {
@@ -476,7 +486,7 @@ const Signoff = (props) => {
                 }
             },
             onOk() {
-                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason }).then(res => {
+                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason, workOrderId: rowData.workOrderId }).then(res => {
                     window.prompt.success('Rejected')
                     getSignoffs()
                 }).catch(err => {

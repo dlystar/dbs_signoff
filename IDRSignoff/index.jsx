@@ -22,7 +22,7 @@ const IDRSignoff = (props) => {
   const [tableLoading, setTableLoading] = useState(false);
   const [form] = Form.useForm();
   const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = IdrSignoffStore;
-  const crStatus = formData?.crStatus_value || orderInfo?.formData?.crStatus_value;
+  const crStatus = orderInfo?.formData?.crStatus_value;
   const containerRef = useRef();
   const initedRef = useRef(false)
   let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
@@ -54,7 +54,7 @@ const IDRSignoff = (props) => {
           const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
           if (initedRef.current) {
             updateState({formData: finilyValues})
-            console.log('IDRSignoff-value-change');
+            console.log('IDRSignoff-value-change', finilyValues);
             onFormValuesChange(finilyValues)
           }
         },60)
@@ -121,13 +121,16 @@ const IDRSignoff = (props) => {
     updateState({ orderInfo })
     if (orderInfo.formData?.crStatus && !initedRef.current) {
       getSignoffs(orderInfo.workOrderId).finally(() => {
-        setTimeout(() => {
-          // formActions.getFormState(formState => {
-          //   const _values = formatFormValues(schema, formState.values)
-          //   onFormValuesChange(_values)
-          // })
-          initedRef.current
-        }, 0)
+        // 工单创建人才需要
+        if (editableStatus.includes(crStatus) && !formDisabled()) {
+          setTimeout(() => {
+            formActions.getFormState(formState => {
+              const _values = formatFormValues(schema, formState.values)
+              onFormValuesChange(_values)
+            })
+            initedRef.current = true
+          }, 0)
+        }
       })
     }
     if (!crStatus && !initedRef.current) {
@@ -143,7 +146,7 @@ const IDRSignoff = (props) => {
     let _tableData = JSON.parse(JSON.stringify(tableData))
     let shouldAdd = false
     let shouldDel = false
-    if (formValues?.IDRsignoff == "271f3a2d5dc04123b5d55c78e586e97b") {
+    if (formValues?.IDRsignoff == "ArgwkW") {
       if (_tableData.length == 0) {
         const newRow = {
           signOffType: ["IDR Signoff"],
@@ -183,10 +186,12 @@ const IDRSignoff = (props) => {
           }
         })).then(() => {
           getSignoffs()
+        }).catch(() => {
+          getSignoffs()
         })
       }
       if (shouldDel) {
-        signoffDeleteBatch([rowData.id]).then(res => {
+        signoffDeleteBatch([rowData.id], orderInfo.workOrderId).finally(() => {
           getSignoffs()
         })
       }
@@ -236,6 +241,8 @@ const IDRSignoff = (props) => {
         caseId: JSON.stringify(rowData.caseId),
         status: "APPROVED"
       }).then(res => {
+        getSignoffs()
+      }).catch(() => {
         getSignoffs()
       })
     }
