@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input, message } from '@chaoswise/ui'
+import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input, Alert } from '@chaoswise/ui'
 import testingSignoffStore from './store';
 import { observer } from '@chaoswise/cw-mobx';
 import Status from './components/Status';
@@ -33,6 +33,7 @@ const Signoff = (props) => {
     let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
     const editableStatus = ['', null, undefined, 'New', 'Reopen']
     const formDataRef = useRef({})
+    const [showBannerText, setShowBannerText] = useState('')
     const formDisabled = () => {
         if(orderInfo.workOrderId && !crStatus){
             return true
@@ -167,6 +168,27 @@ const Signoff = (props) => {
         }
     }
 
+    const showBanner = () => {
+        const testingSignoff = form.getFieldValue('testingSignoff')
+        const inputTypes = testingSignoff?.map(item => item.signOffType)?.flat() || []
+        let needTypes = []
+        signoffTypes.forEach(item => {
+            if (item.conditionValue.includes(formDataRef.current[item.formKey])) {
+                needTypes.push(item.signoffType)
+            }
+        })
+        let notTypes = []
+        needTypes.forEach(item => {
+            if (!inputTypes.includes(item)) {
+                notTypes.push(item)
+            }
+        })
+        if (notTypes.length > 0) {
+            setShowBannerText(`Please add the following missing testing signoff(s): ${notTypes.join(', ')}.`)
+        } else {
+            setShowBannerText('')
+        }
+    }
 
     const onFormSubmit = () => {
         return new Promise((resolve, reject) => {
@@ -349,6 +371,7 @@ const Signoff = (props) => {
             }
         }
         formDataRef.current = newFormData
+        showBanner()
     },300)
 
 
@@ -515,7 +538,11 @@ const Signoff = (props) => {
         })
     }
     return <div className="testingSignoff" ref={containerRef}>
-        <Form form={form} name="signoff"  onValuesChange={() => {fieldValueChangeToValidateFields(form, containerRef, SIGNOFF_GROUP.TESTING_SIGNOFF)}}>
+        {showBannerText && <Alert message={showBannerText} type="warning" showIcon />}
+        <Form form={form} name="signoff"  onValuesChange={() => {
+            fieldValueChangeToValidateFields(form, containerRef, SIGNOFF_GROUP.TESTING_SIGNOFF)
+            showBanner()
+        }}>
             <Form.List name="testingSignoff">
                 {(fields, { add, remove }, { errors }) => {
                     return <CWTable
