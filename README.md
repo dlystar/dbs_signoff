@@ -1,718 +1,433 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CWTable, Form4 as Form, Space, Modal, Checkbox, Input, Alert } from '@chaoswise/ui'
-import testingSignoffStore from './store';
-import { observer } from '@chaoswise/cw-mobx';
-import Status from './components/Status';
-import SignOffType from './components/SignoffType';
-import RejectionReason from './components/RejectionReason';
-import SignOffUserGroup from '../components/Group'
-import SignOffUser from './components/User'
-import Artefact from './components/Artefact'
-import { DeleteOutlined } from '@ant-design/icons';
-import uniqBy from 'lodash-es/uniqBy'
-import sortBy from 'lodash-es/sortBy'
-import { signoffInsertBatch, signoffUpdate, signoffApproved, signoffRejected, signoffSendEmail, getSignOffListByWorkOrderId, signoffStatus, signoffDeleteBatch, signoffBatchUpdate } from '../api'
-import { PlusOutlined } from '@ant-design/icons';
-import { SIGNOFF_GROUP } from '../constants';
-import { helper } from '@/utils/T';
-import Button from '../components/TableButton'
-import { formily } from '@chaoswise/ui/formily';
-import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
-import { fieldValueChangeToValidateFields, saveWorkOrder } from '../util';
-const { useFormEffects, LifeCycleTypes } = formily;
-const Signoff = (props) => {
-    const { formActions, schema, baseActions, orderContainerID, initData, registerOnChildFormSubmit, registerOnFormValuesChange, registerOnOrderCreateSuccess } = props
-    const orderInfo = initData
-    const [tableLoading, setTableLoading] = useState(false)
-    const [form] = Form.useForm();
-    const { signoffTypeOptions, setSignoffTypeOptions, formData, updateState } = testingSignoffStore
-    const crStatus = orderInfo?.formData?.crStatus_value
-    const containerRef = useRef()
-    const initedRef = useRef(false)
-    let accountId = JSON.parse(localStorage.getItem('dosm_loginInfo'))?.user?.accountId || '110';
-    let topAccountId = JSON.parse(localStorage.getItem('userConfig'))?.topAccountId || accountId;
-    const editableStatus = ['', null, undefined, 'New', 'Reopen']
-    const formDataRef = useRef({})
-    const [showBannerText, setShowBannerText] = useState('')
-    
-    const isSameUserGroup = () => {
-        let userInfo = localStorage.getItem('dosm_loginInfo')
-        userInfo = JSON.parse(userInfo)
-        const groupRelation = userInfo.user?.groupRelation?.map?.(item => String(item.groupId)) || [] || []
-        const changeRequestorGroups = orderInfo?.formData?.changeRequestorGroups?.[0]?.groupId
-        console.log('user-compare', groupRelation, changeRequestorGroups, userInfo.user.userId, orderInfo.createdBy);
-        return changeRequestorGroups && groupRelation.includes(changeRequestorGroups)
+import React, { useState, useEffect } from "react";
+import { UploadOutlined, CloudUploadOutlined, EyeOutlined, DownloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Button, Upload, Popover, Modal, TooltipText, Tooltip, Spin } from '@chaoswise/ui';
+import { uploadFileList, reviewFile, downloadFile, bulkDownloadFile } from '../../api'
+import getFileTypeImg from '../../assets/getFileTypeImg'
+import DoEmpty from '@/components/DoEmpty'
+// eslint-disable-next-line import/no-anonymous-default-export
+export default ({ value = [], onChange, row, disabled, ...props }) => {
+    const { form, onValuesChange } = row
+    const [fileList, setFileList] = useState(value)
+    const [imageList, setImageList] = useState([]);
+    const [currentFileList, setCurrentFileList] = useState([])
+    const [listMark, setListMark] = useState({ fileList, imageList });
+    const [uploading, setUploading] = useState(false)
+    const [percent, setPercent] = useState(0);
+    const [visible, setVisible] = useState(false)
+    const [viewVisible, setViewVisible] = useState(false)
+    const [currentViewFile, setCurrentViewFile] = useState({})
+    const [failList, setFailList] = useState([])
+    const { enumAcceptType } = window.DOSM_CONFIG
+    const _accept = enumAcceptType.split(',').map(i => i.replace('.', ''))
+    const maxFileSize = window.DOSM_CONFIG.uploadFileMaxSize || 15;
+    const handleChange = (val) => {
+        onChange(val)
+        onValuesChange(row.name, 'artifact', val)
     }
-    const formDisabled = () => {
-        if(orderInfo.bizKey && !crStatus){
-            return true
-        }
-        if (orderInfo.createdBy) {
-            let userInfo = localStorage.getItem('dosm_loginInfo')
-            userInfo = JSON.parse(userInfo)
-            if (userInfo.user.userId == orderInfo.createdBy) {
-                return false
-            } else if(isSameUserGroup()){
-                return false
-            }else {
-                return true
-            }
+    const convertFileSize = (limit) => {
+        let size = '';
+        if (limit < 1024) {
+            //小于1KB，则转化成B
+            size = limit.toFixed(2) + 'B';
+        } else if (limit < 1024 * 1024) {
+            //小于1MB，则转化成KB
+            size = (limit / 1024).toFixed(2) + 'KB';
+        } else if (limit < 1024 * 1024 * 1024) {
+            //小于1GB，则转化成MB
+            size = (limit / (1024 * 1024)).toFixed(2) + 'MB';
         } else {
-            return false
+            //其他转化成GB
+            size = (limit / (1024 * 1024 * 1024)).toFixed(2) + 'GB';
         }
-    }
-    useFormEffects(($, _) => {
-        // open状态以后，不再去同步表单和signoff的数据了
-        // 别人进来也不监听了
-        if(editableStatus.includes(crStatus) && !formDisabled()){
-            $(LifeCycleTypes.ON_FORM_VALUES_CHANGE).subscribe((formState) => {
-                if(!formState.mounted) return
-                // getbaseValues有滞后性😭，setTimeout一下，不然拿的还是上一次的_value
-                setTimeout(() => {
-                    const baseValues = baseActions.getBaseValue()
-                    const _values = formatFormValues(schema, formState.values)
-                    const finilyValues = { ...(baseValues || {}), ...(_values || {}) }
-                    const tableData = form.getFieldValue('testingSignoff')
-                    if (initedRef.current) {
-                        updateState({ formData: finilyValues })
-                        fieldChange(finilyValues, tableData)
-                    }
-                },60)
+
+        let sizeStr = size + ''; //转成字符串
+        let index = sizeStr.indexOf('.'); //获取小数点处的索引
+        let dou = sizeStr.substr(index + 1, 2); //获取小数点后两位的值
+        if (dou == '00') {
+            //判断后两位是否为00，如果是则删除00
+            return sizeStr.substring(0, index) + sizeStr.substr(index + 3, 2);
+        }
+        return size;
+    };
+    const beforeUpload = (file, fileLists) => {
+        let typeList = [];
+        fileLists?.map((item) => {
+            let { type, size } = item;
+            typeList?.push(type);
+        });
+
+        const checkSizeIsNull = (list) => {
+            let sizeList = [];
+            list?.map((item) => {
+                let { type, size } = item;
+                sizeList?.push(size);
             });
-        }
-    });
-    const arrayIsEqual = (arr1, arr2) => {
-        if (!Array.isArray(arr1) || !Array.isArray(arr2)) return false
-        return JSON.stringify(arr1) == JSON.stringify(arr2)
-    }
-    const { signoffTypes, uatGroupIds = [], nUatGroupIds = [] } = window.DOSM_CUSTOM_DBS.signoff.testingSignoff
-    const tableHasFormData = (key, value, tableData) => {
-        return !!tableData.find(item => item[key]?.includes(value))
-    }
-    const newRow = (signoffTypeValue) => {
-        const rowData = {
-            status: "WAITSEND",
-            signOffType: signoffTypeValue ? [signoffTypeValue] : undefined,
-            signOffUserGroup: undefined,
-            signOffUser: undefined,
-            artifact: undefined,
-            rejectionReason: undefined
-        }
-        return rowData
-    }
-    const shouldResetSignoff = (index, key, val) => {
-        let tableData = form.getFieldValue('testingSignoff')
-        const rowData = tableData[index]
-        // when crStatus is new，change User field
-        // when crStatus is new，change artefact field
-        if (crStatus && rowData.status != 'WAITSEND') {
-            if (key == 'signOffUser' && val) {
-                return true
-            }
-            if (key == 'artifact' && val) {
-                return true
-            }
-            if (key == 'signOffType' && val) {
-                return true
-            }
-            if (key === 'signOffUserGroup' && val) {
-                return true
-            }
-        }
-        return false
-    }
-    useEffect(() => {
-        if (initData) {
-            onFormMount(initData)
-        }
-    }, [])
-    useEffect(() => {
-        registerOnChildFormSubmit && registerOnChildFormSubmit(onFormSubmit)
-        registerOnOrderCreateSuccess && registerOnOrderCreateSuccess(onOrderCreateSuccess)
-    })
-    const onFormMount = (orderInfo) => {
-        updateState({ orderInfo })
-        if (orderInfo.formData?.crStatus && !initedRef.current) {
-            getSignoffs(orderInfo.formData, orderInfo.workOrderId, true)
-            .finally(() => {
-                // 工单创建人才需要
-                if(editableStatus.includes(crStatus) && !formDisabled()){
-                    setTimeout(() => {
-                        const testingSignoff = form.getFieldValue('testingSignoff')
-                        formActions.getFormState(formState => {
-                            const _values = formatFormValues(schema, formState.values)
-                            fieldChange(_values, testingSignoff, orderInfo)
-                        })
-                        initedRef.current = true
-                    }, 0)
-                }
-            })
-        } else if (!orderInfo.formData?.crStatus && !initedRef.current) {
-            const testingSignoff = form.getFieldValue('testingSignoff')
-            formActions.getFormState(formState => {
-                const _values = formatFormValues(schema, formState.values)
-                fieldChange(_values, testingSignoff, orderInfo)
-            })
-            initedRef.current = true
-        }
-    }
-    const onOrderCreateSuccess = (workOrderId) => {
-        // when crStatus is empty (means create order)
-        if (!crStatus) {
-            const tableData = form.getFieldValue('testingSignoff') || []
-            const params = tableData.map(item => {
-                return {
-                    ...item,
-                    signOffUserGroup: JSON.stringify(item.signOffUserGroup),
-                    signOffUser: JSON.stringify(item.signOffUser),
-                    artifact: JSON.stringify(item.artifact),
-                    signOffType: JSON.stringify(item.signOffType),
-                    signOffGroup: SIGNOFF_GROUP.TESTING_SIGNOFF,
-                    topAccountId,
-                    accountId,
-                    workOrderId,
-                }
-            })
-            if (params.length > 0) {
-                signoffInsertBatch(params)
-            }
-        }
-    }
 
-    const showBanner = () => {
-        const testingSignoff = form.getFieldValue('testingSignoff')
-        const inputTypes = testingSignoff?.map(item => item.signOffType)?.flat() || []
-        let needTypes = []
-        signoffTypes.forEach(item => {
-            if (item.conditionValue.includes(formDataRef.current[item.formKey])) {
-                needTypes.push(item.signoffType)
-            }
-        })
-        let notTypes = []
-        needTypes.forEach(item => {
-            if (!inputTypes.includes(item)) {
-                notTypes.push(item)
-            }
-        })
-        if (notTypes.length > 0) {
-            setShowBannerText(`Please add the following missing testing signoff(s): ${notTypes.join(', ')}.`)
-        } else {
-            setShowBannerText('')
-        }
-    }
+            return sizeList?.filter((item) => {
+                return item === 0;
+            })?.length;
+        };
 
-    const onFormSubmit = () => {
-        return new Promise((resolve, reject) => {
-            form.validateFields().then(values => {
-                const { testingSignoff } = values
-                if(!testingSignoff) return resolve({values})
-                const inputTypes = testingSignoff?.map(item => item.signOffType)?.flat() || []
-                let needTypes = []
-                signoffTypes.forEach(item => {
-                    if (item.conditionValue.includes(formDataRef.current[item.formKey])) {
-                        needTypes.push(item.signoffType)
-                    }
-                })
-                let notTypes = []
-                needTypes.forEach(item => {
-                    if (!inputTypes.includes(item)) {
-                        notTypes.push(item)
-                    }
-                })
-                if (notTypes.length > 0) {
-                    const error = [
-                        {
-                            name: 'testingSignoff',
-                            messages: `You need to get ${notTypes.join(',')} Signoff to submit CR.`
+        // const checkSizeIsBig = (list) => {
+        //     return list?.filter((item) => {
+        //         return item?.size > uploadFileSize * 1048576;
+        //     })?.length;
+        // };
+
+        const checkTotalSize = (list) => {
+            let existingFilesSize = 0;
+            if (value && value.length > 0) {
+                // 计算已上传文件的大小
+                value.forEach(item => {
+                    // 如果文件已经有字节大小属性(fileSize)
+                    if (item.fileSize && !isNaN(parseInt(item.fileSize))) {
+                        existingFilesSize += parseInt(item.fileSize);
+                    } 
+                    // 如果文件有格式化的大小字符串(size)，需要解析
+                    else if (item.size && typeof item.size === 'string') {
+                        const sizeStr = item.size.toLowerCase();
+                        let multiplier = 1;
+                        
+                        if (sizeStr.includes('kb')) {
+                            multiplier = 1024;
+                        } else if (sizeStr.includes('mb')) {
+                            multiplier = 1024 * 1024;
+                        } else if (sizeStr.includes('gb')) {
+                            multiplier = 1024 * 1024 * 1024;
                         }
-                    ]
-                    reject(error)
-                } else {
-                    resolve({ values })
-                }
-            })
-            .catch(errors => {
-                let parentNodeId = containerRef?.current?.closest('.ant-tabs-tabpane')?.id;
-                document.querySelector('.ant-form-item-explain-error') && document.querySelector('.ant-form-item-explain-error').scrollIntoView({ behavior: 'smooth' })
-                const error = errors?.errorFields?.map(item => {
-                    return {
-                        name: item.name,
-                        messages: item.errors
-                    }
-                })
-                return reject({
-                    tabKey: parentNodeId?.split('.$')?.[1],
-                    [SIGNOFF_GROUP.TESTING_SIGNOFF]: error
-                })
-            })
-        })
-    }
-    const getSignoffs = (formData, workOrderId, isMounted) => {
-        const orderId = orderInfo.workOrderId || workOrderId
-        if (!orderId) {
-            return new Promise((resolve, reject) => { resolve('') })
-        }
-        setTableLoading(true)
-        return getSignOffListByWorkOrderId({ workOrderId: orderId, signOffGroup: SIGNOFF_GROUP.TESTING_SIGNOFF }).then(res => {
-            console.log('API返回数据:', res);
-            res = res?.data?.map(item => {
-                return {
-                    ...item,
-                    signOffUserGroup: JSON.parse(item.signOffUserGroup),
-                    signOffUser: JSON.parse(item.signOffUser),
-                    artifact: JSON.parse(item.artifact),
-                    signOffType: JSON.parse(item.signOffType),
-                }
-            })
-            console.log('解析后的数据:', res);
-            const testingSignoffData = res?.filter(i => i.signOffGroup === SIGNOFF_GROUP.TESTING_SIGNOFF)
-            console.log('过滤后的数据:', testingSignoffData);
-            form.setFieldValue('testingSignoff', sortBy(testingSignoffData, 'id'))
-            console.log('表单值:', form.getFieldValue('testingSignoff'));
-            let typeOptions = []
-            testingSignoffData.forEach(i => {
-                typeOptions = typeOptions.concat(i.signOffType || [])
-            })
-            if(isMounted){
-                setSignoffTypeOptions(uniqBy(typeOptions.map(i => ({ label: i, value: i })), 'value'))
-            }
-            setTableLoading(false)
-        }).catch(err => {
-            setTableLoading(false)
-        })
-    }
-
-
-    const fieldChange = helper.debounce((newFormData, _tableData, _orderInfo) => {
-        const _signoffTypeOptions = []
-        const tableData = JSON.parse(JSON.stringify(_tableData || []))
-        let newRows = []
-        let deleteRows = []
-        let updateRows = []
-        signoffTypes.forEach(signoffType => {
-            const title = signoffType.signoffType
-            const name = signoffType.formKey
-            const _value = signoffType.formKey + '_value'
-            // Check if the form data matches the signoff condition value and if the table data does not already have a row with the same signoff type
-            // if (newFormData[name] && signoffType.conditionValue.includes(newFormData[name]) && !tableHasFormData('signOffType', title, tableData)) {
-            //     newRows.push(newRow(title))
-            //     tableData.push(newRow(title))
-            // }
-            // Check if the form data does not match the signoff condition value and if the table data already has a row with the same signoff type
-            if ((newFormData[name] && !signoffType.conditionValue.includes(newFormData[name]) || !newFormData[name]) && tableHasFormData('signOffType', title, tableData)) {
-                // const index = tableData.findIndex(item => arrayIsEqual(item.signOffType, [title]))
-                // if (index > -1) {
-                //     let deleteRow = tableData.splice(index, 1)
-                //     deleteRows = deleteRows.concat(deleteRow.filter(i => i.id))
-                // }
-                tableData.forEach(item => {
-                    if (item.signOffType && item.signOffType?.length > 0 && item.signOffType.includes(title)) {
-                        item.signOffType.splice(item.signOffType.findIndex(i => i == title), 1)
-                        if(item.signOffType?.includes('UAT')){
-                            item.signOffUserGroup = [{
-                                groupId: uatGroupIds,
-                                groupName: 'SVP & Above'
-                            }]
-                        }else{
-                            item.signOffUserGroup = [{
-                                groupId: nUatGroupIds[0],
-                                groupName: 'HR Employee List'
-                            }]
-
+                        
+                        const numericSize = parseFloat(sizeStr.replace(/[^0-9.]/g, ''));
+                        if (!isNaN(numericSize)) {
+                            existingFilesSize += numericSize * multiplier;
                         }
-                        console.log(`testingSignoff-${title} 条件不满足 新值:${newFormData[_value]} 旧值:${formDataRef.current?.[_value]}`);
-                        updateRows.push(item)
                     }
-                })
+                    // 如果无法获取大小，估计为1MB
+                    else {
+                        existingFilesSize += 1024 * 1024; // 默认1MB
+                    }
+                });
             }
-            if (newFormData[name] && signoffType.conditionValue.includes(newFormData[name])) {
-                _signoffTypeOptions.push({ label: title, value: title })
-            }
-        })
-
-
-        setSignoffTypeOptions(uniqBy(_signoffTypeOptions, 'value'))
-        if (!arrayIsEqual(_tableData, tableData)) {
-            if (newFormData.crStatus || crStatus) {
-                let fetchs = []
-                if (deleteRows.length > 0) {
-                    fetchs.push(signoffDeleteBatch(deleteRows.map(item => item.id)), orderInfo.workOrderId)
-                }
-                if (newRows.length > 0) {
-                    fetchs.push(signoffInsertBatch(newRows.map(item => {
-                        return {
-                            ...item,
-                            signOffUserGroup: JSON.stringify(item.signOffUserGroup),
-                            signOffUser: JSON.stringify(item.signOffUser),
-                            artifact: JSON.stringify(item.artifact),
-                            signOffType: JSON.stringify(item.signOffType),
-                            signOffGroup: SIGNOFF_GROUP.TESTING_SIGNOFF,
-                            topAccountId,
-                            accountId,
-                            workOrderId: orderInfo.workOrderId
-                        }
-                    })))
-                }
-                if(updateRows.length > 0){
-                    updateRows.forEach(item => {
-                        fetchs.push(signoffUpdate({
-                            ...item,
-                            signOffUserGroup: JSON.stringify(item.signOffUserGroup),
-                            signOffUser: JSON.stringify(item.signOffUser),
-                            artifact: JSON.stringify(item.artifact),
-                            signOffType: JSON.stringify(item.signOffType),
-                            signOffGroup: SIGNOFF_GROUP.TESTING_SIGNOFF,
-                            topAccountId,
-                            accountId,
-                            workOrderId: orderInfo.workOrderId
-                        }))
-                    })
-                }
-                if (fetchs.length > 0) {
-                    Promise.all(fetchs).finally(() => {
-                        getSignoffs()
-                    })
-                }
-            }else{
-                console.log('tableData', tableData);
-
-                setTimeout(() => {
-                    form.setFieldValue('testingSignoff', tableData)
-                }, 60)
-            }
-        }
-        formDataRef.current = newFormData
-        showBanner()
-    },300)
-
-
-    const addRecord = () => {
-        const tableData = form.getFieldValue('testingSignoff') || []
-        if (!crStatus) {
-            tableData.push(newRow())
-            form.setFieldValue('testingSignoff', tableData)
-        } else {
-            const rowData = {
-                status: "WAITSEND",
-                signOffType: "[]",
-                signOffUserGroup: undefined,
-                signOffUser: undefined,
-                artifact: undefined,
-                signOffGroup: 'TestingSignoff'
-            }
-            signoffInsertBatch([{ ...rowData, workOrderId: orderInfo.workOrderId }]).then(res => {
-                getSignoffs()
-            }).catch(() => {
-                getSignoffs()
-            })
-        }
-    }
-    const removeRecord = (row) => {
-        if (!crStatus) {
-            row.remove(row.name)
-        } else {
-            const tableData = form.getFieldValue('testingSignoff') || []
-            const deleteRow = tableData[Number(row.name)]
-            return signoffDeleteBatch([deleteRow.id], orderInfo.workOrderId).then(res => {
-                getSignoffs().finally(() => {
-                    showBanner()
-                })
-                
-            }).catch(err => {
-                getSignoffs()
-            })
-        }
-    }
-    const showAdd = () => {
-        let userInfo = localStorage.getItem('dosm_loginInfo')
-        userInfo = JSON.parse(userInfo)
-        const currentUser = userInfo.user.userId
-        return !formDisabled() && editableStatus.includes(crStatus) && signoffTypeOptions.length > 0
-    }
-
-    const onValuesChange = (index, key, val) => {
-        const tableData = form.getFieldValue('testingSignoff')
-        const rowData = tableData[index]
-        if (crStatus) {
-            signoffUpdate({
-                ...rowData,
-                signOffUserGroup: JSON.stringify(rowData.signOffUserGroup) || "[]",
-                signOffUser: JSON.stringify(rowData.signOffUser) || "[]",
-                artifact: JSON.stringify(rowData.artifact),
-                signOffType: JSON.stringify(rowData.signOffType),
-            }).then(res => {
-                if (shouldResetSignoff(index, key, val)) {
-                    signoffStatus({ signOffId: rowData.id, status: 'WAITSEND', workOrderId: rowData.workOrderId }).then(res => {
-                        getSignoffs()
-                    }).catch(err => {
-                        window.prompt.error(err.msg)
-                    })
-                } else {
-                    getSignoffs()
-                }
-            }).catch(() => {
-                getSignoffs()
-            })
-        }
-    }
-    // 发送
-    const sendEmail = (rowNum) => {
-        const tableData = form.getFieldValue('testingSignoff')
-        const rowData = tableData[rowNum]
-        let clickable = false
-        const onChange = (e) => {
-            clickable = e.target.checked
-            if (e.target.checked) {
-                window.parent.sendEmail_button.removeAttribute('disabled')
-            } else {
-                window.parent.sendEmail_button.setAttribute('disabled', true)
-            }
-        }
-        setTimeout(() => {
-            window.parent.sendEmail_button.setAttribute('disabled', true)
-        }, 60)
-        const noArtifact = !rowData?.artifact || rowData?.artifact?.length == 0
-        if (noArtifact) {
-            window.prompt.error('Please upload artefact')
-            return
             
-            // return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
-            //     window.prompt.success('Successfully send')
-            //     getSignoffs()
-            // }).catch(err => {
-            //     window.prompt.error(err.msg)
-            // })
-        }
-        Modal.confirm({
-            title: 'Declaration',
-            content: <span><Checkbox onChange={onChange} style={{ marginRight: 10 }} />I am fully responsible & accountable for all the artefacts uploaded and attest that it does not contain any customer, sensitive, or PII data.</span>,
-            okButtonProps: { id: 'sendEmail_button' },
-            okText: 'Confirm',
-            cancelText: 'Discard',
-            getContainer() {
-                const { inIframe } = window.DOSM_CUSTOM_DBS.signoff
-                if (inIframe) {
-                    return window.parent?.document?.body
-                } else {
-                    return document.body
+            let newFilesSize = 0;
+            list?.forEach(item => {
+                newFilesSize += item.size || 0;
+            });
+            
+            const totalSize = existingFilesSize + newFilesSize;
+            
+            return totalSize > maxFileSize * 1048576;
+        };
+
+        let uploadList = [...fileLists];
+
+        if (checkSizeIsNull(uploadList)) {
+            uploadList?.forEach((item, index) => {
+                if (item?.size == 0) {
+                    delete uploadList[index];
                 }
-            },
-            onOk() {
-                return signoffSendEmail({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
-                    window.prompt.success('Successfully send')
-                    getSignoffs()
-                    saveWorkOrder(orderContainerID)
-                }).catch(err => {
-                    window.prompt.error(err.msg)
-                })
-            },
-        })
-    }
-    const approval = (rowNum) => {
-        const tableData = form.getFieldValue('testingSignoff')
-        const rowData = tableData[rowNum]
-        return signoffApproved({ signOffId: rowData.id, workOrderId: rowData.workOrderId }).then(res => {
-            window.prompt.success('Approved')
-            getSignoffs()
-        }).catch(err => {
-            window.prompt.error(err.msg)
-        })
-    }
-    const reject = (rowNum) => {
-        const tableData = form.getFieldValue('testingSignoff')
-        const rowData = tableData[rowNum]
-        let rejectionReason = ''
-        const onChange = (e) => {
-            rejectionReason = e.target.value
-        }
-        Modal.confirm({
-            title: 'Rejection Reason',
-            icon: null,
-            content: <div><Input.TextArea onChange={onChange} /></div>,
-            getContainer() {
-                const { inIframe } = window.DOSM_CUSTOM_DBS.signoff
-                if (inIframe) {
-                    return window.parent?.document?.body
-                } else {
-                    return document.body
+            });
+
+            let arr = [];
+            uploadList?.forEach((item) => {
+                if (item) {
+                    arr?.push(item);
                 }
-            },
-            onOk() {
-                if(!rejectionReason){
-                    window.prompt.error('Please enter rejection reason')
-                    return Promise.reject()
-                }
-                return signoffRejected({ signOffId: rowData.id, rejectionReason: rejectionReason, workOrderId: rowData.workOrderId }).then(res => {
-                    window.prompt.success('Rejected')
-                    getSignoffs()
-                }).catch(err => {
-                    window.prompt.error(err.msg)
-                })
-            },
-        })
-    }
-    const getErrorTips = (index) => {
-        const tableData = form.getFieldValue('testingSignoff') || []
-        const rowData = tableData[index] || {}
-        const status = rowData.status
-        if(status != 'APPROVED'){
-            return {
-                showError: true,
-                errorText: 'Required before submit to Open',
-                signOffType: rowData.signOffType
-            }
-        }else{
-            return {
-                showError: false,
-                errorText: '',
-                signOffType: rowData.signOffType
+            });
+            uploadList = arr;
+
+            window.prompt.error('You are not allowed to upload an empty file');
+
+            if (!uploadList?.length) {
+                return false;
             }
         }
+
+        // if (checkSizeIsBig(uploadList)) {
+        //     uploadList?.forEach((item, index) => {
+        //         if (item?.size > uploadFileMaxSize * 1048576) {
+        //             //限制大小
+        //             delete uploadList[index];
+        //         }
+        //     });
+
+        //     let arr = [];
+        //     uploadList?.forEach((item) => {
+        //         if (item) {
+        //             arr?.push(item);
+        //         }
+        //     });
+        //     uploadList = arr;
+        //     window.prompt.error(`Max size: ${uploadFileMaxSize}MB`);
+        //     if (!uploadList?.length) {
+        //         return false;
+        //     }
+        // }
+
+        if (checkTotalSize(uploadList)) {
+            window.prompt.error(`The total file size cannot exceed ${maxFileSize}MB`);
+            return false;
+        }
+
+        const checkSuffix = (list) => {
+            return list?.filter((file) => {
+                const suffix = file.name
+                    .substring(file.name.lastIndexOf('.') + 1, file.name.length)
+                    .toLowerCase();
+                return !_accept.includes(suffix);
+            })?.length;
+        };
+        if (checkSuffix(uploadList)) {
+            uploadList?.forEach((file, index) => {
+                const suffix = file.name
+                    .substring(file.name.lastIndexOf('.') + 1, file.name.length)
+                    .toLowerCase();
+                if (!_accept.includes(suffix)) {
+                    delete uploadList[index];
+                }
+            });
+            let arr = [];
+            uploadList?.forEach((item) => {
+                if (item) {
+                    arr?.push(item);
+                }
+            });
+            uploadList = arr;
+            window.prompt.error('File in this format is not supported.');
+            if (!uploadList?.length) {
+                return false;
+            }
+        }
+
+        let _imgList = [];
+        let _fileList = [];
+        uploadList?.forEach((item) => {
+            if (item.type?.startsWith('image')) {
+                _imgList?.push({
+                    ...item,
+                    fileName: item.name,
+                    type: 'img',
+                });
+            }
+            // 无论什么类型的文件都将放进fileList中
+            _fileList?.push({
+                ...item,
+                name: item.name,
+                size: convertFileSize(item.size),
+                load: true,
+                type: item.type?.startsWith('image') ? 'img' : null,
+            });
+        });
+        // setListMark({
+        //     fileList,
+        //     imageList,
+        // });
+        setFileList([...(fileList || []), ...(_fileList || [])]);
+        setImageList([...(imageList || []), ...(_imgList || [])])
+        setCurrentFileList(uploadList);
+    };
+    const cb = (event) => {
+        setPercent(parseInt(((event.loaded / event.total) * 100).toFixed(0)));
+    };
+    const customRequest = ({ file, onProgress, onSuccess, onError, ...rest }) => {
+        setUploading(true);
+        uploadFileList({
+            files: currentFileList
+        }, cb).then(
+            (res) => {
+                const { data } = res;
+                const { failFile, fileVoList } = data;
+                const fileListNew = fileVoList.map(item => {
+                    return {
+                        id: item.id,
+                        load: true,
+                        name: item.fileName,
+                        size: item.fileSize,
+                        thype: null,
+                        uid: item.id,
+                        uploadUserName: item.uploadUserName,
+                        url: item.url
+                    }
+                })
+                for (let j = 0; j < failFile?.length; j++) {
+                    window.prompt.error(failFile[j].error);
+                    continue;
+                }
+                handleChange([...(value || []), ...(fileListNew || [])])
+                setFailList(failList.concat(failFile.map(item => ({
+                    name: item.fileName,
+                    error: item.error
+                })) || []))
+                if(failFile?.length < currentFileList.length){
+                    setVisible(false)
+                }
+                setUploading(false);
+            },
+            (err) => {
+                window.prompt.error(
+                    err?.msg ||
+                    'Upload timeout caused by poor network or large file.'
+                );
+                setFileList(listMark.fileList.map(item => ({
+                    name: item.fileName,
+                    error: item.error
+                })) || []);
+                setImageList(listMark.imageList || []);
+                setUploading(false);
+            }
+        );
     }
-    return <div className="testingSignoff" ref={containerRef}>
-        {showBannerText && <Alert message={showBannerText} type="warning" showIcon />}
-        <Form form={form} name="signoff"  onValuesChange={() => {
-            fieldValueChangeToValidateFields(form, containerRef, SIGNOFF_GROUP.TESTING_SIGNOFF)
-            showBanner()
-        }}>
-            <Form.List name="testingSignoff">
-                {(fields, { add, remove }, { errors }) => {
-                    return <CWTable
-                        loading={tableLoading}
-                        scroll={{ x: 1200 }}
-                        style={{ width: '100%' }}
-                        columns={[
-                            {
-                                title: "Status",
-                                key: 'status',
-                                index: 'status',
-                                width: '120px',
-                                render(text, row) {
-                                    const errorObj = getErrorTips(row.name)
-                                    return <Form.Item name={[row.name, 'status']}>
-                                        <Status row={row} disabled={formDisabled()} {...errorObj} />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: <span><span style={{ color: '#f5222d' }}>*</span>Signoff Type</span>,
-                                key: 'signOffType',
-                                index: 'signOffType',
-                                width: '200px',
-                                render(text, row) {
-                                    const status = ['', null, undefined, 'New', 'Reopen']
-                                    const disabled = !status.includes(crStatus)
-                                    return <Form.Item name={[row.name, 'signOffType']} rules={[{ required: true, message: 'Please select Signoff Type' }]}>
-                                        <SignOffType type="testing" row={row} disabled={formDisabled() || disabled} signoffTypeOptions={signoffTypeOptions} />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: <span><span style={{ color: '#f5222d' }}>*</span>Group</span>,
-                                key: 'Group',
-                                index: 'Group',
-                                width: '350px',
-                                render(text, row) {
-                                    const status = ['', null, undefined, 'New', 'Reopen']
-                                    const disabled = !status.includes(crStatus)
-                                    return <Form.Item name={[row.name, 'signOffUserGroup']} rules={[{ required: true, message: 'Please select Group' }]}>
-                                        <SignOffUserGroup row={row} disabled={true} formActions={formActions} selectWidth="330px" />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: <span><span style={{ color: '#f5222d' }}>*</span>Signer</span>,
-                                key: 'User',
-                                index: 'User',
-                                width: '300px',
-                                render(text, row) {
-                                    const status = ['', null, undefined, 'New', 'Reopen']
-                                    const disabled = !status.includes(crStatus)
-                                    return <Form.Item name={[row.name, 'signOffUser']} rules={[{ required: true, message: 'Please select User' }]}>
-                                        <SignOffUser row={row} disabled={formDisabled() || disabled} selectWidth="283px" />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: <span><span style={{ color: '#f5222d' }}>*</span>Artefact</span>,
-                                key: 'artifact',
-                                width: '200px',
-                                index: 'artifact',
-                                render(text, row) {
-                                    const status = ['', null, undefined, 'New', 'Reopen', 'Open']
-                                    const disabled = !status.includes(crStatus)
-                                    return <Form.Item name={[row.name, 'artifact']} rules={[{ required: true, message: 'Please upload artefact' }]}>
-                                        <Artefact disabled={formDisabled() || disabled} row={row} />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: <span>Rejection Reason</span>,
-                                key: 'rejectionReason',
-                                width: '200px',
-                                index: 'rejectionReason',
-                                render(text, row) {
-                                    return <Form.Item name={[row.name, 'rejectionReason']}>
-                                        <RejectionReason />
-                                    </Form.Item>
-                                }
-                            },
-                            {
-                                title: "Actions",
-                                key: 'actions',
-                                index: 'actions',
-                                width: '200px',
-                                fixed: 'right',
-                                render(text, row) {
-                                    const tableData = form.getFieldValue('testingSignoff')
-                                    const rowData = tableData[row.name] || {}
-                                    const approver = rowData.signOffUser?.[0]?.userId
-                                    let userInfo = localStorage.getItem('dosm_loginInfo')
-                                    userInfo = JSON.parse(userInfo)
-                                    const currentUser = userInfo.user.userId
-                                    const showSend = () => {
-                                        return crStatus &&
-                                            (rowData.status === 'WAITSEND') &&
-                                            rowData.signOffType &&
-                                            (rowData.signOffUserGroup && rowData.signOffUserGroup?.length > 0) &&
-                                            (rowData.signOffUser && rowData.signOffUser?.length > 0) &&
-                                            (currentUser == orderInfo.createdBy || isSameUserGroup())
-                                    }
-                                    return <Space>
-                                        {/* <Button icon={<EditOutlined />} style={{border: 'none', background: 'transparent'}}></Button> */}
-                                        {
-                                            showAdd() &&
-                                            rowData.status != 'REJECTED' &&
-                                            <Button style={{ border: 'none', background: 'transparent' }} onClick={() => {
-                                                removeRecord(row)
-                                            }}><DeleteOutlined /></Button>
-                                        }
-                                        {
-                                            rowData.status === 'PENDING' && approver == currentUser &&
-                                            <Button type="primary" onClick={() => approval(row.name)}>Approve</Button>
-                                        }
-                                        {
-                                            rowData.status === 'PENDING' && approver == currentUser &&
-                                            <Button type="danger" ghost onClick={() => reject(row.name)}>Reject</Button>
-                                        }
-                                        {
-                                            showSend() &&
-                                            <Button type="primary" onClick={() => sendEmail(row.name)}>Send</Button>
-                                        }
-                                    </Space>
-                                }
-                            }
-                        ]}
-                        dataSource={fields?.map((i) => ({ ...i, remove, form, signoffTypeOptions: signoffTypeOptions, onValuesChange, formData }))}
-                        pagination={false}
-                                            ></CWTable>
-                }}
-            </Form.List>
+    const viewFile = (file) => {
+        let type = file?.name?.substr(file?.name.lastIndexOf('.'));
+        let _file = { ...file }
+        if (type === '.pdf') {
+            _file.url = `${window.DOSM_CONFIG?.apiDomain}/api/v2/file/review?id=${file.id}`
+        }
+        if (window.DOSM_CONFIG.enumAcceptPicture.includes(type)) {
+            _file.url = `${window.DOSM_CONFIG?.apiDomain}/api/v2/file/review?id=${file.id}`
+            _file.type = 'img'
+        }
+        setViewVisible(true)
+        setCurrentViewFile(_file)
+        setVisible(false)
+    }
+    const download = (file) => {
+        downloadFile(file.id, file.name)
+    }
+    const bulkDownload = () => {
+        const ids = value.map(i => i.id)
+        bulkDownloadFile(ids, 'Artefact', 'zip')
+    }
+    const deleteFile = (file, listType) => {
+        const _value = JSON.parse(JSON.stringify(value))
+        _value.splice(_value.findIndex(i => i.id === file.id), 1)
+        handleChange(_value)
+    }
+    const renderFileItem = (fileItem, listType) => {
+        const fileType = fileItem.name.split('.')[fileItem.name.split('.').length - 1]
+        return <div className="file_item" style={{ display: 'flex', alignItems: 'center', paddingLeft: 10 }} key={fileItem.id}>
+            <div className="file_name" style={{ width: 500 }}>
+                <span style={{ marginRight: 10 }}>{getFileTypeImg(fileType.toLowerCase())}</span>
+                <TooltipText ellipsisPosition="center" width={430}><a onClick={() => viewFile(fileItem)}>{fileItem.name}</a></TooltipText>
+            </div>
+            <div className="file_oprate" style={{ width: 100, marginLeft: 20 }}>
+                {/* <Button style={{border: 'none', background: 'transparent'}} onClick={() => viewFile(fileItem)}><EyeOutlined /></Button> */}
+                <Button style={{ border: 'none', background: 'transparent', padding: 5 }} onClick={() => download(fileItem)}><DownloadOutlined /></Button>
+                {!disabled && <Button style={{ border: 'none', background: 'transparent', padding: 5 }} onClick={() => deleteFile(fileItem, listType)}><DeleteOutlined /></Button>}
+            </div>
+        </div>
+    }
+    const renderFailItem = (fileItem, index) => {
+        const fileType = fileItem.name.split('.')[fileItem.name.split('.').length - 1]
+        return <div className="file_item" style={{ display: 'flex', alignItems: 'center', paddingLeft: 10 }} key={fileItem.name + index}>
+            <div className="file_name" style={{ width: 500 }}>
+                <span style={{ marginRight: 10 }}>{getFileTypeImg(fileType.toLowerCase())}</span>
+                <TooltipText ellipsisPosition="center" trigger="click" width={430}>
+                    <Tooltip title={fileItem.error}><span style={{color: 'red'}}>{fileItem.name}</span></Tooltip>
+                </TooltipText>
+            </div>
+            <div className="file_oprate" style={{ width: 100, marginLeft: 20 }}>
+                {<Button style={{ border: 'none', background: 'transparent', padding: 5 }} onClick={() => {
+                    const _value = JSON.parse(JSON.stringify(failList))
+                    _value.splice(index, 1)
+                    setFailList(_value)
+                }}><DeleteOutlined /></Button>}
+            </div>
+        </div>
+    }
+    const renderFileOuter = (fileItem) => {
+        const fileType = fileItem.name.split('.')[fileItem.name.split('.').length - 1]
+        return <Tooltip title={fileItem.name}>{getFileTypeImg(fileType.toLowerCase())}</Tooltip>
+    }
+    const hasFile = () => {
+        return value?.length > 0
+    }
+    const getContainer = () => {
+        const { inIframe } = window.DOSM_CUSTOM_DBS.signoff
+        if (inIframe) {
+            return window.parent?.document?.body
+        } else {
+            return document.body
+        }
+    }
+    return <div>
+        <Popover visible={visible} onVisibleChange={(vis) => setVisible(vis)} trigger="click" title={null} placement="top" getPopupContainer={getContainer} content={
+            <div className="upload_modal" style={{ marginTop: 20, width: 600 }}>
+                <style>{`.upload_modal .file_item:hover{background: #e5f6ff;}`}</style>
+                <Spin spinning={uploading}>
+                    {
+                        !disabled && <Upload.Dragger
+                            listType='text'
+                            fileList={value || []}
+                            beforeUpload={(file, fileList) => beforeUpload(file, fileList)}
+                            customRequest={customRequest}
+                            // accept={newfileTypeArray?.join(',')}
+                            multiple={true}
+                            showUploadList={false}
+                        >
+                            <div style={{ padding: '20px 0px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <CloudUploadOutlined style={{ fontSize: 20, marginRight: 20, color: '#1980ff' }} />Click or drag the file to this area
+                            </div>
+                            <div style={{ color: 'rgba(0, 0, 0, 0.45)' }}>
+                                File format:&nbsp;
+                                <TooltipText width={300} getPopupContainer={(node) => node.parentNode}>{_accept.join('/')}</TooltipText>
+                                &nbsp;&nbsp;&nbsp;
+                                <br/>
+                                Multiple files can be uploaded for each signoff, but the total file size cannot exceed 15MB.
+                            </div>
+                        </Upload.Dragger>
+                    }
+                </Spin>
+                <div style={{ textAlign: 'right', margin: '5px 0px' }}>
+                    {
+                        (value?.length > 0) &&
+                        <Button onClick={bulkDownload} type="link" style={{ border: 'none' }}><DownloadOutlined />Bulk Download</Button>
+                    }
+                </div>
+                <div className="files">
+                    {value && value?.map?.(item => renderFileItem(item, 'fileList'))}
+                    {failList.map((item, index) => renderFailItem(item, index))}
+                </div>
+                <div>
+                    {disabled && !value?.length && <DoEmpty />}
+                </div>
+            </div>
+        }>
+            <Button disabled={disabled && !hasFile()} style={{ background: '#f0f1f4', border: 'none' }} onClick={() => {
+                if (disabled && !hasFile()) return
+                setVisible(true)
+            }}>
+                {<UploadOutlined style={{ marginRight: 5 }} />}
+                {
+                    hasFile() ?
+                        <div className="files" style={{ maxWidth: 200 }}>
+                            {value?.map(item => renderFileOuter(item))}
+                        </div>
+                        : 'Upload'
+                }
+            </Button>
+        </Popover>
+        <Modal
+            visible={viewVisible}
+            title={<div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div>{currentViewFile.name}</div>
+                <Button style={{ marginRight: 50 }} onClick={() => download(currentViewFile)}><DownloadOutlined />Download</Button>
+            </div>}
+            width="98%"
+            style={{ top: 20 }}
+            footer={null}
+            maskClosable
+            onCancel={() => setViewVisible(false)}
+            getContainer={getContainer}
+            zIndex={9999}
+            bodyStyle={{
+                minHeight: 300
+            }}
+        >
             {
-                showAdd() &&
-                <Button type="link" size="small" onClick={addRecord}><PlusOutlined />Add</Button>
+                currentViewFile?.type == 'img' ?
+                    <img src={currentViewFile?.url} /> :
+                    <iframe style={{ width: '100%', height: 600 }} src={currentViewFile?.url ? currentViewFile?.url : reviewFile(currentViewFile.id)}></iframe>
             }
-        </Form>
+        </Modal>
     </div>
 }
-export default observer(Signoff);
