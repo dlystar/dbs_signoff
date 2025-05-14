@@ -11,6 +11,7 @@ import { checkType } from '@/utils/T';
 import { EnumDateRange } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/constants';
 import { obtainCurrentLanguageState } from '@/utils/T/core/helper';
 import { queryRangePieces } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/api/formSet.js';
+import { getDateRangePieces, validateDateRange } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/api'
 
 const _range = (start, end) => {
   if (
@@ -27,19 +28,20 @@ const _range = (start, end) => {
 
 const IDate = ({
   value: _value,
-  onChange: _onChange = () => {},
-  dateFormat,
+  onChange: _onChange = () => { },
+  dateFormat, 
   disabled,
-  placeholder,
-  onBlur,
+  placeholder, 
+  onBlur, 
   suffixIcon,
-  isTableItem,
+  isTableItem, 
   t,
-  dateRange,
-  fieldCode,
-  serviceTimeIds,
+  dateRange, 
+  fieldCode, 
+  serviceTimeIds, 
   timeSelectRangeType = "ONLY_RANGE",
-  rangeType = 'CUSTOM'
+  rangeType = 'CUSTOM',
+  extendSetting,
 }) => {
   useEffect(() => {
     if (value === 0 && checkType.isNumber(value)) {
@@ -47,15 +49,21 @@ const IDate = ({
       onBlur(null);
     }
   }, [value]);
+
   const [open, setOpen] = useState(false);
   const mostValuesRef = useRef({ min: undefined, max: undefined });
   const [serviceTimeRange, setServiceTimeRange] = useState(null);
-
+  const useExtend = rangeType === 'EXTEND' && (extendSetting && Array.isArray(extendSetting) && extendSetting.length > 0)
+  let _timeSelectRangeType = timeSelectRangeType
+  if (useExtend) _timeSelectRangeType = 'ONLY_RANGE_OUT'
+  const modelRef = useRef('start') 
+  const [rangeValue, setRangeValue] = useState(value) 
   useEffect(() => {
-    if (rangeType !== 'CUSTOM') {
+    if (isBusinessPanel) return
+    if (rangeType === 'SERVICETIME') {
       if (
-        timeSelectRangeType &&
-        timeSelectRangeType !== 'ANY' &&
+        _timeSelectRangeType &&
+        _timeSelectRangeType !== 'ANY' &&
         serviceTimeIds &&
         serviceTimeIds?.length
       ) {
@@ -66,14 +74,14 @@ const IDate = ({
         });
       }
     }
-  }, [timeSelectRangeType, serviceTimeIds, rangeType]);
+  }, [_timeSelectRangeType, serviceTimeIds, rangeType]);
 
-  const handleChange = val => {
+  const handelVal = (val) => {
     const _dateString = val
       ? [
-          EnumDateFormatType.yearMonthDayHoursMinutes,
-          EnumDateFormatType.all
-        ].includes(dateFormat) &&
+        EnumDateFormatType.yearMonthDayHoursMinutes,
+        EnumDateFormatType.all
+      ].includes(dateFormat) &&
         dateFormat === EnumDateFormatType.yearMonthDayHoursMinutes
         ? val.format('YYYY-MM-DD HH:mm')
         : val.format('YYYY-MM-DD HH:mm:ss')
@@ -84,8 +92,71 @@ const IDate = ({
         ? val.startOf('day').valueOf()
         : _val
       : null;
-    _onChange(timeStamp);
-    onBlur && onBlur(timeStamp);
+    return timeStamp
+  }
+
+  const handleChange = val => {
+    const [start, end] = val || [null, null]
+    let value = { startDate: handelVal(start), endDate: handelVal(end) }
+    let _val = [start, end]
+    if(value.startDate > value.endDate){
+      value = {startDate: handelVal(end), endDate: handelVal(start) }
+      _val = [end, start]
+    }
+    setRangeValue(_val)
+    _onChange(value);
+    onBlur && onBlur(value);
+    if (useExtend) {
+      if (val) {
+        t.actions.getFormState(state => {
+          const formData = { ...(state.values || {}), ...(t.baseActions.getBaseValue() || {}) }
+          validateDateRange({
+            formId: t.orderInfo.formId,
+            formData,
+            fieldCode,
+            extendClassId: extendSetting[0].id,
+          }).then(res => {
+            if (!res.data) return
+            if (res.data.correct === true) {
+              t.actions.setFieldState(fieldCode, state => {
+                state.errors = []
+                const successHint = {
+                  hintType: 'custom',
+                  hintContent: `<span style="color: #72c240;"}>${res.data.message}</span>`
+                }
+                if (state.props['x-props'].fieldHint && Array.isArray(state.props['x-props'].fieldHint)) {
+                  const hint4Index = state.props['x-props'].fieldHint.findIndex(i => i.hintType === 'custom')
+                  if (hint4Index > -1) {
+                    state.props['x-props'].fieldHint[hint4Index] = successHint
+                  } else {
+                    state.props['x-props'].fieldHint.push(successHint)
+                  }
+                }
+              })
+            } else {
+              t.actions.setFieldState(fieldCode, state => {
+                state.errors = [res.data.message]
+                if (state.props['x-props'].fieldHint && Array.isArray(state.props['x-props'].fieldHint)) {
+                  const hint4Index = state.props['x-props'].fieldHint.findIndex(i => i.hintType === 'custom')
+                  if (hint4Index > -1) {
+                    state.props['x-props'].fieldHint.splice(hint4Index, 1)
+                  }
+                }
+              })
+            }
+          })
+        })
+      } else {
+        t.actions.setFieldState(fieldCode, state => {
+          if (state.props['x-props'].fieldHint && Array.isArray(state.props['x-props'].fieldHint)) {
+            const hint4Index = state.props['x-props'].fieldHint.findIndex(i => i.hintType === 'custom')
+            if (hint4Index > -1) {
+              state.props['x-props'].fieldHint.splice(hint4Index, 1)
+            }
+          }
+        })
+      }
+    }
   };
 
   const { isBusinessPanel, getPopupContainer, formLayout } = t || {};
@@ -94,17 +165,17 @@ const IDate = ({
     EnumDateFormatType.yearMonthDay === dateFormat
       ? EnumDateFormatRule.yearMonthDay
       : EnumDateFormatType.yearMonthDayHoursMinutes === dateFormat
-      ? EnumDateFormatRule.yearMonthDayHoursMinutes
-      : EnumDateFormatRule.all;
-  // _dateFormat = isTableItem ? dateFormat === EnumDateFormatType.all ? EnumDateFormatRuleSimple.all : EnumDateFormatRuleSimple.yearMonthDay : _dateFormat;
+        ? EnumDateFormatRule.yearMonthDayHoursMinutes
+        : EnumDateFormatRule.all;
+
   let _formState;
   t?.actions?.getFormState()?.then(res => {
     _formState = res;
   });
+
   const disabledDate = useCallback(
     current => {
-      //为了兼容历史数据所以需要保留 特新增字段rangeType
-      if (timeSelectRangeType === 'ANY') return false;
+            if (_timeSelectRangeType === 'ANY') return false;
       if (rangeType === 'CUSTOM') {
         if (dateRange) {
           const { dateMaxLimit, dateMinLimit } = dateRange;
@@ -132,7 +203,7 @@ const IDate = ({
                     .add(1, 'day');
                 } else {
                   _dateRange[
-                    timeSelectRangeType === 'ONLY_RANGE' ? 0 : 1
+                    _timeSelectRangeType === 'ONLY_RANGE' ? 0 : 1
                   ] = moment().startOf('week');
                 }
               }
@@ -146,12 +217,10 @@ const IDate = ({
               }
             } else {
               if (!addon) {
-                //自定义时间
                 if (key === 'defined' && dateMinLimit?.defined) {
-                  _dateRange[0] = moment(mostValuesRef.current.min || dateMinLimit?.defined).startOf('day');
+                  _dateRange[0] = moment(mostValuesRef.current.min).startOf('day');
                 } else {
                   let _startDate = mostValuesRef.current.min;
-                  // 计划结束时间对于时间范围取决于其他日期字段时 只处理其他日期字段有值的情况
                   if (_startDate) {
                     _dateRange[0] = moment(_startDate).startOf('day');
                   }
@@ -194,9 +263,8 @@ const IDate = ({
               }
             } else {
               if (!addon) {
-                //自定义时间
                 if (key === EnumDateRange.defined && dateMaxLimit?.defined) {
-                  _dateRange[1] = moment(mostValuesRef.current.max || dateMaxLimit?.defined).endOf('day');
+                  _dateRange[1] = moment(mostValuesRef.current.max).endOf('day');
                 } else {
                   let _endDate = mostValuesRef.current.max;
                   if (_endDate) {
@@ -206,14 +274,11 @@ const IDate = ({
               }
             }
           }
-          //最小值-无限制
           if (_dateRange[0] && !_dateRange[1]) {
             return current < _dateRange[0];
           } else if (_dateRange[1] && !_dateRange[0]) {
-            //无限制-最大值
             return current > _dateRange[1];
           } else if (_dateRange[0] && _dateRange[1]) {
-            //最小值-最大值
             return !(current >= _dateRange[0] && current <= _dateRange[1])
           } else {
             return false;
@@ -227,16 +292,15 @@ const IDate = ({
             begin: moment(i.begin),
             end: moment(i.end)
           }));
-          //允许选择范围内的时间
-          if (timeSelectRangeType === 'ONLY_RANGE') {
+          if (_timeSelectRangeType === 'ONLY_RANGE') {
             return !_dateRanges.some(
               i =>
                 i.begin.startOf('day') <= current &&
                 i.end.endOf('day') >= current
             );
           } else {
-            let result = calcServiceTime(serviceTimeRange,current);
-            if(result){
+            let result = calcServiceTime(serviceTimeRange, current);
+            if (result) {
               return result.disabledHours().length === 24;
             }
             return false;
@@ -246,10 +310,9 @@ const IDate = ({
         }
       }
     },
-    [rangeType, serviceTimeRange, timeSelectRangeType, dateRange]
+    [rangeType, serviceTimeRange, _timeSelectRangeType]
   );
 
-  //校验当前时间是否是和边界值是同一日期或时间 type date/hours/minutes/seconds
   const isValidSameDateTime = (current, target, type = 'date') => {
     const _format = type === 'date' ? 'YYYY-MM-DD' : 'HH:mm:ss';
     const currentDate = current.format(_format);
@@ -304,7 +367,7 @@ const IDate = ({
       });
     if (sameDateRanges && sameDateRanges.length !== 0) {
       let hours = [];
-      if (timeSelectRangeType === 'ONLY_RANGE_OUT') {
+      if (_timeSelectRangeType === 'ONLY_RANGE_OUT') {
         for (let index = 0; index < sameDateRanges.length; index++) {
           const sameDateRangeItem = sameDateRanges[index];
           if (index === 0 && sameDateRangeItem.begin.hours() !== 0) {
@@ -341,50 +404,50 @@ const IDate = ({
             );
           }
         }
-      }else{
+      } else {
         for (let index = 0; index < sameDateRanges.length; index++) {
           const sameDateRangeItem = sameDateRanges[index];
-            hours = hours.concat(
-              _range(
-                moment(sameDateRangeItem.begin)
-                  .hours(),
-                moment(sameDateRangeItem.end)
-                  .hours() + 1
-              )
-            );
+          hours = hours.concat(
+            _range(
+              moment(sameDateRangeItem.begin)
+                .hours(),
+              moment(sameDateRangeItem.end)
+                .hours() + 1
+            )
+          );
         }
       }
       return {
         disabledHours: () => {
-            return totalHours.filter(i => !hours.includes(i));
+          return totalHours.filter(i => !hours.includes(i));
         },
         disabledMinutes: selectedHour => {
-          if (selectedHour === -1){
+          if (selectedHour === -1) {
             return [];
           }
           let sameHourRanges = sameDateRanges
-                .filter(i => {
-                  return (
-                    moment(i.begin).startOf('hour') <=
-                    moment(tempDate).hours(selectedHour).startOf('hour') &&
-                    moment(i.end).endOf('hour') >= moment(tempDate).hours(selectedHour).endOf('hour')
-                  );
-                })
-                .map(i => {
-                  let beginTmp = moment(i.begin);
-                  let endTmp = moment(i.end);
-                  if (moment(i.end).endOf('hour') > moment(tempDate).hours(selectedHour).endOf('hour')) {
-                    endTmp = moment(tempDate).hours(selectedHour).endOf('hour');
-                  }
+            .filter(i => {
+              return (
+                moment(i.begin).startOf('hour') <=
+                moment(tempDate).hours(selectedHour).startOf('hour') &&
+                moment(i.end).endOf('hour') >= moment(tempDate).hours(selectedHour).endOf('hour')
+              );
+            })
+            .map(i => {
+              let beginTmp = moment(i.begin);
+              let endTmp = moment(i.end);
+              if (moment(i.end).endOf('hour') > moment(tempDate).hours(selectedHour).endOf('hour')) {
+                endTmp = moment(tempDate).hours(selectedHour).endOf('hour');
+              }
 
-                  if (moment(i.begin).startOf('hour') < moment(tempDate).hours(selectedHour).startOf('hour')) {
-                    beginTmp = moment(tempDate).hours(selectedHour).startOf('hour');
-                  }
-                  return {
-                    begin: beginTmp,
-                    end: endTmp
-                  };
-                });
+              if (moment(i.begin).startOf('hour') < moment(tempDate).hours(selectedHour).startOf('hour')) {
+                beginTmp = moment(tempDate).hours(selectedHour).startOf('hour');
+              }
+              return {
+                begin: beginTmp,
+                end: endTmp
+              };
+            });
           if (sameHourRanges && sameHourRanges.length !== 0) {
             if (
               sameHourRanges[0].begin.hours() !== selectedHour
@@ -398,9 +461,9 @@ const IDate = ({
                 tempDate
               ).hours(selectedHour).endOf('hour');
             }
-            
+
             let minutes = [];
-            if (timeSelectRangeType === 'ONLY_RANGE_OUT') {
+            if (_timeSelectRangeType === 'ONLY_RANGE_OUT') {
               for (let index = 0; index < sameHourRanges.length; index++) {
                 const sameHourRangeItem = sameHourRanges[index];
                 if (index === 0 && sameHourRangeItem.begin.minutes() !== 0) {
@@ -435,62 +498,62 @@ const IDate = ({
                         .minutes() + 1
                     )
                   );
-                  
+
                 }
               }
-              
-            }else{
+
+            } else {
               for (let index = 0; index < sameHourRanges.length; index++) {
                 const sameHourRangeItem = sameHourRanges[index];
                 minutes = minutes.concat(
-                    _range(
-                      moment(sameHourRangeItem.begin)
-                        .minutes(),
-                      moment(sameHourRangeItem.end)
-                        .minutes() + 1
-                    )
-                  );
+                  _range(
+                    moment(sameHourRangeItem.begin)
+                      .minutes(),
+                    moment(sameHourRangeItem.end)
+                      .minutes() + 1
+                  )
+                );
               }
             }
             return totalMinutes.filter(i => !minutes.includes(i));
           }
           return [];
         },
-        disabledSeconds: (selectedHour,selectedMinute) => {
-          if(selectedHour == -1 || selectedMinute == -1){
+        disabledSeconds: (selectedHour, selectedMinute) => {
+          if (selectedHour == -1 || selectedMinute == -1) {
             return [];
           }
           let sameHourRanges = sameDateRanges
-                .filter(i => {
-                  return (
-                    moment(i.begin).startOf('hour') <=
-                    moment(tempDate).hours(selectedHour).startOf('hour') &&
-                    moment(i.end).endOf('hour') >= moment(tempDate).hours(selectedHour).endOf('hour')
-                  );
-                })
-                .map(i => {
-                  let beginTmp = moment(i.begin);
-                  let endTmp = moment(i.end);
-                  if (moment(i.end).endOf('hour') > moment(tempDate).hours(selectedHour).endOf('hour')) {
-                    endTmp = moment(tempDate).hours(selectedHour).endOf('hour');
-                  }
+            .filter(i => {
+              return (
+                moment(i.begin).startOf('hour') <=
+                moment(tempDate).hours(selectedHour).startOf('hour') &&
+                moment(i.end).endOf('hour') >= moment(tempDate).hours(selectedHour).endOf('hour')
+              );
+            })
+            .map(i => {
+              let beginTmp = moment(i.begin);
+              let endTmp = moment(i.end);
+              if (moment(i.end).endOf('hour') > moment(tempDate).hours(selectedHour).endOf('hour')) {
+                endTmp = moment(tempDate).hours(selectedHour).endOf('hour');
+              }
 
-                  if (moment(i.begin).startOf('hour') < moment(tempDate).hours(selectedHour).startOf('hour')) {
-                    beginTmp = moment(tempDate).hours(selectedHour).startOf('hour');
-                  }
+              if (moment(i.begin).startOf('hour') < moment(tempDate).hours(selectedHour).startOf('hour')) {
+                beginTmp = moment(tempDate).hours(selectedHour).startOf('hour');
+              }
 
-                  return {
-                    begin: beginTmp,
-                    end: endTmp
-                  };
-                });
+              return {
+                begin: beginTmp,
+                end: endTmp
+              };
+            });
           let sameMinuteRanges = sameHourRanges
             .filter(i => {
               return (
                 moment(i.begin).startOf('minute') <=
-                  moment(tempDate).startOf('minute') &&
+                moment(tempDate).startOf('minute') &&
                 moment(i.end).endOf('minute') >=
-                  moment(tempDate).endOf('minute')
+                moment(tempDate).endOf('minute')
               );
             })
             .map(i => {
@@ -527,7 +590,7 @@ const IDate = ({
               let max = moment(i.end).seconds();
               seconds = seconds.concat(_range(min, max + 1));
             });
-            if (timeSelectRangeType === 'ONLY_RANGE') {
+            if (_timeSelectRangeType === 'ONLY_RANGE') {
               return totalSeconds.filter(i => !seconds.includes(i));
             } else {
               return totalSeconds.filter(i => seconds.includes(i));
@@ -540,19 +603,24 @@ const IDate = ({
   };
 
   const _disabledTime = useCallback(
-    date => {
-      if(timeSelectRangeType === 'ANY') {
+    (date, partical) => {
+            if (partical) modelRef.current = partical
+      if (_timeSelectRangeType === 'ANY') {
         return false;
       }
       if (!date) {
         return {
-          disabledHours: () => Array.from({length: 24}, (_, index) => index),
-          disabledMinutes: () => Array.from({length: 60}, (_, index) => index),
-          disabledSeconds: () => Array.from({length: 60}, (_, index) => index),
+          disabledHours: () => Array.from({ length: 24 }, (_, index) => index),
+          disabledMinutes: () => Array.from({ length: 60 }, (_, index) => index),
+          disabledSeconds: () => Array.from({ length: 60 }, (_, index) => index),
         };
       }
       if (serviceTimeRange && date && rangeType === 'SERVICETIME') {
-        const result = calcServiceTime(serviceTimeRange, date);
+        const result = calcServiceTime(serviceTimeRange || [], date);
+        return result;
+      }
+      if (useExtend) {
+        const result = calcServiceTime(serviceTimeRange || [], date);
         return result;
       }
       if (dateRange && rangeType === 'CUSTOM') {
@@ -593,12 +661,10 @@ const IDate = ({
             }
           } else {
             if (!addon) {
-              //自定义时间
               if (key === 'defined' && dateMinLimit?.defined) {
                 _dateRange[0] = moment(mostValuesRef.current.min);
               } else {
                 let _startDate = mostValuesRef.current.min;
-                // 计划结束时间对于时间范围取决于其他日期字段时 只处理其他日期字段有值的情况
                 if (_startDate) {
                   _dateRange[0] = moment(_startDate);
                 }
@@ -641,7 +707,6 @@ const IDate = ({
             }
           } else {
             if (!addon) {
-              //自定义时间
               if (key === EnumDateRange.defined && dateMaxLimit?.defined) {
                 _dateRange[1] = moment(mostValuesRef.current.max);
               } else {
@@ -661,7 +726,7 @@ const IDate = ({
           }
         ];
 
-        const result = calcServiceTime(_dateLongRange, date);
+        const result = calcServiceTime(_dateLongRange || [], date);
         return result;
       }
 
@@ -675,12 +740,11 @@ const IDate = ({
         }
       };
     },
-    [rangeType, serviceTimeRange, timeSelectRangeType, dateRange]
+    [rangeType, serviceTimeRange, _timeSelectRangeType]
   );
 
   const onOpenChange = open => {
     if (open) {
-      //当前字段时间范围可能是取决于其他日期字段，这时日历选择下拉框展开需要提前缓存时间范围设置字段的当前值
       const { dateMaxLimit, dateMinLimit } = dateRange || {};
       if (dateMinLimit && !dateMinLimit?.addon) {
         if (dateMinLimit.key === 'defined' && dateMinLimit?.defined) {
@@ -700,32 +764,60 @@ const IDate = ({
           });
         }
       }
+      if (useExtend) {
+        t.actions.getFormState(state => {
+          const formData = { ...(state.values || {}), ...(t.baseActions.getBaseValue() || {}) }
+          getDateRangePieces({
+            formId: t.orderInfo.formId,
+            formData,
+            fieldCode,
+            extendClassId: extendSetting[0].id,
+          }).then(res => {
+            if (res.code === 100000) {
+              setServiceTimeRange(res.data || []);
+            }
+          });
+        })
+      }
+    } else {
+      if (!rangeValue) {
+        setRangeValue(undefined)
+      }
+      if (rangeValue && rangeValue?.[0] && rangeValue?.[1]) {
+        const startTime = rangeValue?.[0].format('YYYY-MM-DD HH:mm')
+        const endTime =  rangeValue?.[1].format('YYYY-MM-DD HH:mm')
+        let type = startTime !== endTime
+        if(type) {
+          handleChange(rangeValue) 
+        }else {
+          let copyRangeValue =[]
+          rangeValue.forEach(item=>copyRangeValue.push(item))
+          modelRef.current == "start"? copyRangeValue[0] = undefined :copyRangeValue[1] = undefined
+          setRangeValue(copyRangeValue)
+        }
+       
+      }
     }
     setOpen(open);
   };
-
+ 
   const value = useMemo(() => {
-    if (!_value) return null
-    if (isNaN(_value)) {
-      return moment(_value).startOf('day')
+    if (!_value) {
+      setRangeValue(null)
+      return null
     }
-    return moment(Number(_value))
+    if (_value?.startDate && _value?.endDate) {
+      setRangeValue([moment(_value?.startDate), moment(_value?.endDate)])
+      return [moment(_value?.startDate), moment(_value?.endDate)]
+    }
   }, [_value])
 
-   // 获取下一个可用的小时
-  // @param bannedHours: 被禁用的小时列表
-  // @param currentHour: 当前选择的小时
-  // @return: 下一个可用的小时，如果当前小时可用则返回当前小时
-  const getNextAvailableHour = (bannedHours, currentHour) => {
-    // 如果当前小时不在禁用列表中，直接返回当前小时
+  function getNextAvailableHour(bannedHours, currentHour) {
     if (!bannedHours.includes(currentHour)) return currentHour
     const banned = new Set(bannedHours);
-    // 如果所有小时都被禁用，返回undefined
-    if (banned.size === 24) return undefined;
-    // 如果没有禁用的小时，返回0
-    if (banned.size === 0) return 0;
+    if (banned.size === 24) return undefined; 
+    if (banned.size === 0) return 0; 
 
-    // 从最大禁用小时开始，寻找下一个可用的小时
     const maxBanned = Math.max(...bannedHours);
     let candidate = (maxBanned + 1) % 24;
     while (banned.has(candidate)) {
@@ -734,20 +826,12 @@ const IDate = ({
     return candidate;
   }
 
-  // 获取下一个可用的分钟或秒
-  // @param bannedTimes: 被禁用的时间列表（分钟或秒）
-  // @param currentTime: 当前选择的时间（分钟或秒）
-  // @return: 下一个可用的时间，如果当前时间可用则返回当前时间
-  const getNextAvailableMAndS = (bannedTimes, currentTime) => {
-    // 如果当前时间不在禁用列表中，直接返回当前时间
-    if (!bannedTimes.includes(currentTime)) return currentTime
+  function getNextAvailableMAndS(bannedTimes, currentHour) {
+    if (!bannedTimes.includes(currentHour)) return currentHour
     const banned = new Set(bannedTimes);
-    // 如果所有时间都被禁用，返回undefined
-    if (banned.size === 60) return undefined;
-    // 如果没有禁用的时间，返回0
+    if (banned.size === 60) return undefined; 
     if (banned.size === 0) return 0;
 
-    // 从最大禁用时间开始，寻找下一个可用的时间
     const maxBanned = Math.max(...bannedTimes);
     let candidate = (maxBanned + 1) % 60;
     while (banned.has(candidate)) {
@@ -760,55 +844,14 @@ const IDate = ({
     <div className={styles['dynamic-date']}>
       {disabled ? (
         <div className={styles['readonly-date']}>
-          {value ? value.format(_dateFormat) : '--'}
+          {value ? `${value[0].format(_dateFormat)} - ${value[1].format(_dateFormat)}` : '--'}
         </div>
       ) : (
-        <DatePicker
-          value={value}
+        <DatePicker.RangePicker
+          value={rangeValue}
           disabled={isBusinessPanel}
           disabledDate={disabledDate}
-          // 使用 onChange 替代 onPickerValueChange
-          onChange={(date) => {
-            if (!date) {
-              handleChange(null);
-              return;
-            }
-            // 如果不需要显示时间选择，直接使用当前值
-            if (![
-              EnumDateFormatType.all,
-              EnumDateFormatType.yearMonthDayHoursMinutes
-            ].includes(dateFormat)) {
-              handleChange(date);
-              return;
-            }
-            // 获取当前时间点的禁用时间配置
-            const disabledTimes = _disabledTime(date);
-            // 如果存在禁用时间配置
-            if (disabledTimes && disabledTimes.disabledHours && date) {
-              // 获取被禁用的小时列表
-              const disabledHours = disabledTimes.disabledHours();
-              // 获取下一个可用的小时
-              const candidate = getNextAvailableHour(disabledHours, date.hours());
-              // 获取被禁用的分钟列表
-              const disabledMinutes = disabledTimes.disabledMinutes(candidate);
-              // 获取下一个可用的分钟，如果获取不到则使用当前分钟
-              const m = getNextAvailableMAndS(disabledMinutes, date.minutes()) ?? date.minutes();
-
-              // 获取被禁用的秒数列表
-              const disabledSeconds = disabledTimes.disabledSeconds(candidate, m);
-              // 获取下一个可用的秒数，如果获取不到则使用当前秒数
-              const s = getNextAvailableMAndS(disabledSeconds, date.seconds()) ?? date.seconds();
-
-              // 创建一个新的时间对象，使用调整后的时、分、秒
-              const time = date.clone().hours(candidate).minutes(m).seconds(s);
-              // 更新值
-              handleChange(time);
-            } else {
-              // 如果没有禁用时间配置，直接使用当前时间
-              handleChange(date);
-            }
-          }}
-          placeholder={placeholder}
+          onChange={handleChange}
           showTime={[
             EnumDateFormatType.all,
             EnumDateFormatType.yearMonthDayHoursMinutes
@@ -820,7 +863,33 @@ const IDate = ({
           dropdownClassName={`fs-${formLayout?.fontSize}`}
           getPopupContainer={getPopupContainer || (() => document.body)}
           disabledTime={_disabledTime}
-        />
+          onPickerValueChange={(current) => {
+            if (!current) return
+            const disabledTimes = _disabledTime(current)
+            if (disabledTimes && disabledTimes.disabledHours && current) {
+              const disabledHours = disabledTimes.disabledHours()
+              const candidate = getNextAvailableHour(disabledHours, current.hours())
+              const disabledMinutes = disabledTimes.disabledMinutes(candidate)
+              const m = getNextAvailableMAndS(disabledMinutes, current.minutes()) ?? current.minutes()
+
+              const disabledSeconds = disabledTimes.disabledSeconds(m)
+              const s = getNextAvailableMAndS(disabledSeconds, current.seconds()) ?? current.seconds()
+
+              const time = current.clone().hours(candidate).minutes(m).seconds(s)
+              if (modelRef.current == 'start') {
+                setRangeValue([time, rangeValue?.[1]])
+              } else {
+                setRangeValue([rangeValue?.[0], time])
+              }
+            } else {
+              if (modelRef.current == 'start') {
+                setRangeValue([current, rangeValue?.[1]])
+              } else {
+                setRangeValue([rangeValue?.[0], current])
+              }
+            }
+          }}
+        /> 
       )}
     </div>
   );
