@@ -1,1311 +1,1739 @@
 import { intl } from '@chaoswise/intl';
-import { useEffect, useState, useMemo } from 'react';
-import { useTable, useBlockLayout, useResizeColumns } from 'react-table';
-import { EditableCell, defaultEnum } from '../../constants/fields';
-import { helper, checkType } from '@/utils/T';
+import { theme } from '@/theme';
+import React, {
+  useMemo,
+  useEffect,
+  useRef,
+  useState,
+  useImperativeHandle,
+  forwardRef,
+} from 'react';
 import {
-  EnumValidationRulesValue,
-  EnumDateInitValue,
-  EnumAutoNumberRuleComponentType,
-  EnumAutoNumberRule,
-  EnumAutoDateRuleSelectData,
-} from '../../../../constants';
-import { getValidateRules } from '../../util/checkRules';
+  Popconfirm,
+  Button,
+  Tooltip,
+  message,
+  Icon,
+  Modal,
+  Progress,
+  Pagination,
+  Spin,
+  Drawer,
+  Space
+} from '@chaoswise/ui';
+import { Upload } from 'antd';
+import useTableItems, { $rowKey, $deleteable } from '../hooks/useTableItems';
+import styles from '../style/table.less';
+import { downloadFile, downloadFileByUrl } from '@/utils/T/core/helper';
+import { downloadFile as downLoad } from '@/hooks/useFile/api';
+import DoAppIcon from '@/components/DoAppIcon';
+import { useAsyncEffect, useMemoizedFn } from 'ahooks';
 import { langUtil } from '@/lang';
-
-import { EnumType } from '@/constants/common/formType';
-import { permission } from '@/services/auth';
-import { convertToPrimaryArray } from '@/utils/T/core/helper';
 import {
-  getUserListByIdsForMember,
-  getUserSuperiorsByParam,
-  addTableAutoNumber,
-  deleteTableAutoNumber,
-  getUserGroupInfoById
-} from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/api/index.js';
-import { userInfoKind } from '@/constants/common/formType';
-import { getLabel } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/utils';
+  importTableData,
+  downLoadTableTemplate,
+} from '@/services/commonAPI/updateFile';
 import moment from 'moment';
-import { eventManager } from '@/utils/T/core/helper';
-import { useAsyncEffect, useGetState, useLatest } from 'ahooks';
-import { isEmpty } from '@/utils/T/core/checkType';
-import { cloneDeep, isObject, isNil } from 'lodash-es'
-import { formily } from '@chaoswise/ui/formily';
+import { EnumType } from '@/constants/common/formType';
+import { eventManager, guid } from '@/utils/T/core/helper';
+import DosmDpCom from '@/components/ModuleFederation/DosmDpCom';
+import { getReferenceData } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/api';
+import { useCreation } from 'ahooks';
+import TableFilterIcon, { isFilters } from './TableFilterIcon';
+import RowForm from './RowForm';
+import FormFieldTooltip from '@/pages/BusinessSetting/ProcessManagement/CreateNew/FormDesign/FormEngine/FormRender/CustomFieldBox/FormFieldTooltip'
+import { SortableContainer, SortableElement, SortableHandle } from 'react-sortable-hoc';
+import DragIcon from '@/pages/ListNew/FieldShowSetting/DragIcon';
+import cls from 'classnames'
+import arrayMove from 'array-move';
+import { nanoid } from 'nanoid';
+
+const { Dragger } = Upload;
+
+const isNewData = Symbol('@@标记这条数据是用户新关联的@@'); // cw-i18n-disable-line
 
 
-const { FormPath, useFormEffects, LifeCycleTypes } = formily;
+const ITableForm = ({ ...props }) => {
+  const tableEl = useRef(null);
+  const uploadRef = useRef(null);
+  const selectDataTableRef = useRef({ current: {} });
+  const {
+    fieldName,
+    fieldCode,
+    useByChanges,
+    modifiedValue,
+    t,
+    isSupportExport,
+    isSupportImport,
+    value,
+    linkTable,
+    readOnly,
+    onChange,
+    columns,
+    utils,
+    hasAddBtn,
+    version = 'v1',
+    quoteDataTable = {},
+    colMinWidth,
+    isValid,
+    tableFieldRowConf = {
+      startNum: 0,
+      pageSize: '5'
+    },
+    tableEdit,
+    enableRowSort,
+    disabled
+  } = props;
+  const tableEleId = useCreation(() => `${guid(6)}_${fieldCode}`);
+  const {
+    getTableBodyProps,
+    colState,
+    rows: _rows,
+    cols,
+    headers,
+    prepareRow,
+    addRow,
+    delRow,
+    copyRow,
+    errList,
+    btnPermission = {},
+    addRows,
+    formatRows,
+    getNewRow,
+    onRowChange,
+    setData,
+    adding
+  } = useTableItems({ ...props, tableEleId });
+  const { startNum, pageSize: settingSize } = tableFieldRowConf;
 
+  const [filters, setFilters] = useState({}); // 筛选条件
 
-export const $rowKey = Symbol('rowKey')
-export const $deleteable = Symbol('removeable')
+  const onFilters = (value, column) => {
+    setFilters({ ...filters, [column.id]: { column, value } });
+    setCurrentPage(1);
+  }
+  // 是否有配置项
+  const isCMDB = !!useMemo(() => (headers || []).find(item => item['x-component'] === 'CMDB_CONFIG'), [headers]);
+  const isCmdbField = !!(props.dpItem || props.attrId);
 
+  // 是否有在筛选
+  const _isFilters = useMemo(() => Object.values(filters).some(item => isFilters(item?.value)), [filters]);
+  // 筛选行
+  const rows = useMemo(() => {
+    if (!_isFilters) return _rows;
+    return (_rows || []).filter(row => {
+      return Object.entries(row.values || {}).every(([id, value]) => {
+        const filter = filters[id];
+        if (!filter || !filter.value) return true;
+        if (Object.prototype.toString.call(filter.value) === '[object Array]' && !filter.value.length) return true;
+        // 下拉单选
+        if (filter.column['x-component'] === 'SELECT') {
+          return filter.value.includes(value);
+        }
+        // 下拉多选
+        if (filter.column['x-component'] === 'SELECT_MANY') {
+          return (value || []).find(v => filter.value.includes(v));
+        }
+        // 多级下拉
+        if (filter.column['x-component'] === 'MULTI_SELECT') {
+          return (value || []).find(v => filter.value.includes(v));
+        }
+        // 成员
+        if (filter.column['x-component'] === 'MEMBER') {
+          return (value || []).find(v => filter.value.find(_v => v.userId === _v.userId));
+        }
+        // 成员组-仅到人
+        if (filter.column['x-component'] === 'GROUP' && filter.column['x-props'].selectType === 'person') {
+          return (value || []).find(v => filter.value.find(_v => v.userId === _v.userId));
+        }
+        // 成员组-仅到组
+        if (filter.column['x-component'] === 'GROUP' && filter.column['x-props'].selectType === 'group') {
+          return (value || []).find(v => filter.value.find(_v => v.groupId === _v.groupId));
+        }
+        // 成员组-既可到组也可到人
+        if (filter.column['x-component'] === 'GROUP' && filter.column['x-props'].selectType === 'all') {
+          let filterValue = [];
+          if (Object.prototype.toString.call(filter.value) === '[object Array]') {
+            filterValue = filter.value;
+          } else {
+            filterValue = [...(filter.value.group || []), ...(filter.value.user || [])];
+          }
+          return (value || []).find(v => filterValue.find(_v => (v.groupId === _v.groupId && (!!v.groupId)) || ((v.userId === _v.userId) && (!!v.userId))));
+        }
 
-/**
- * 表格字段的hook
- * @param {*} param0
- * @returns
- */
-function useTableItems({ ...props }) {
-  const defaultColumn = { Cell: EditableCell };
-  const {
-    columns: columnsTable = [],
-    value,
-    onChange,
-    fieldCode,
-    t,
-    utils,
-    disabled,
-    linkTable,
-    useByChanges,
-    readOnly,
-    quoteDataTable,
-    version,
-    tableEleId,
-    setValidatorBool,
-    tableEdit,
-    promptContent
-  } = props;
-  const columns = version === 'v2' ? quoteDataTable?.bringOutFieldSchema || [] : columnsTable;
-  const { handleValueToLabel } = utils || {};
-  let {
-    linkCol,
-    linkVal,
-    linkOption,
-    linkAdditionOptions,
-    linkageChangeOptions,
-    linkageSetFieldHint,
-    setDateRange
-  } = linkTable || {};
-  const {
-    actions,
-    followTableInfo,
-    setChangedColumnField,
-    tableColMap = {},
-    linkTableRef = {},
-  } = t || {};
-  const { isBusinessPanel, orderInfo } = t || {};
-  const { workOrderId, formModelId } = orderInfo || {};
-  const {
-    adminFlag,
-    currentUserId,
-    followTableCode,
-    followTableColCode,
-    formReadOnly,
-  } = followTableInfo || {}; // 节点设置-处理设置-多人处理-跟随表格成员
-  const initValue = useMemo(() => (Array.isArray(value) ? value : []), []); // 初始value
-  const [excludeCheckRow, setExcludeCheckRow] = useState([]);
-  // 操作按钮权限
-  const btnPermission = useMemo(() => {
-    let obj = {};
-    obj['flag'] = (!disabled || adminFlag) && !formReadOnly; // 【添加行\删除行】的权限 ------- （字段联动-表格非只读 || 是系统管理员） && 表单非只读
-    obj['disabledDelMaxRow'] =
-      obj['flag'] && followTableCode === fieldCode && !adminFlag
-        ? initValue?.length
-        : ''; // 有【不能删除的行】 ------- 表格非只读 && 当前表格是跟随表格 && 不是系统管理员 && 表单非只读
-    return obj;
-  }, [disabled, followTableInfo]);
-  // 权限控制下、不能编辑的行号list
-  // 当前表格是跟随表格 && 不是系统管理员 && 表单非只读 ===> true: 当前用户只能编辑【自己那一行】
-  const disabledRows = useMemo(() => {
-    const flag = followTableCode === fieldCode && !formReadOnly;
-    let rows = [];
-    flag &&
-      initValue?.forEach((v, i) => {
-        const rowUser = v?.rowData?.[followTableColCode]?.[0]?.userId;
-        if (rowUser != currentUserId) rows = [...rows, i + ''];
-      });
-    // 如果是表格引用数据表，则单元格斗不可编辑
-    if (version === 'v2') {
-      value?.forEach((v, i) => {
-        rows = [...rows, i + ''];
-      });
-      return rows;
-    }
-    setExcludeCheckRow(rows);
-    return !adminFlag && flag ? rows : '';
-  }, [disabled, followTableInfo, value]);
+      });
+    })
+  }, [_rows, filters, _isFilters]);
 
-  const [cols, setCols, getCols] = useGetState(() =>
-    checkType.isArray(columns)
-      ? columns?.map((c) => ({
-        ...c,
-        Header: c?.title || '',
-        accessor: c?.key,
-      }))
-      : []
-  );
+  const { dataTableName, listViewId, dataTableId, formViewId } = quoteDataTable;
+  const {
+    isBusinessPanel,
+    actions,
+    baseActions,
+    linkage,
+    onFieldLinkage,
+    isType = 'myStart',
+    linkTableRef,
+    orderInfo,
+    formLayout
+  } = t || {};
+  const { referenceTableFormMap } = orderInfo || {};
+  const { handleValueToLabel } = utils || {};
+  let { linkageChangeOptions } = linkTable || {};
+  const [exportBtnLoading, setExportBtnLoading] = useState(false);
+  const [valid, setValid] = useState(isValid || false);
+  const [isRightMost, setIsRightMost] = useState(false); // 横向滚动条是否滑到最右
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(settingSize);
+  const [dataLength, setDataLength] = useState(rows?.length);
+  const [updateItems, setupdateItems] = useState(null); // 表格配置项附带回显数据
+  const isDataTable = version === 'v2'; // 表格是否使用数据表作为数据来源
+  const [selectedTableData, setSelectedTableData] = useState([]); // 数据表记录
+  const [title, setTitle] = useState('');
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [currentViewData, setCurrentViewData] = useState({});
+  const [refDataLoading, setRefDataLoading] = useState(false);
+  const [initRowsNum, setInitRowsNum] = useState(0);
+  const [radKey, setRadKey] = useState(nanoid());
 
-  const [adding, setAdding] = useState(false)
-  const [data, setData] = useState(() => getTableData(value, columns));
-  const [errList, setErrList] = useState();
-  const [requiredCells, setRequiredCells] = useState([]);
-  const fakeData = useMemo(() => [getNewRowData(cols)], [cols]);
+  actions?.getFieldState(fieldCode).then((state) => {
+    setValid(state?.valid || true);
+  });
 
+  useEffect(() => {
+    let eventManagerCode = `tableItemChange${fieldCode}`;
+    const updateOthreFuntion = (dataItems = {}) => {
+      setupdateItems(dataItems);
+    };
+    // 把选定配置项待渲染字段数据存到状态
+    eventManager.on(eventManagerCode, updateOthreFuntion);
+    return () => {
+      eventManager.off(eventManagerCode, updateOthreFuntion);
+    };
+  }, []);
+  useEffect(() => {
+    // 渲染选定配置项字段数据 然后清空待渲染字段数据
+    if (updateItems) {
+      let _value = value.map((el, index) => {
+        if (index == updateItems?.rowNum) {
+          let newEl = { ...el };
+          let filterUpdateItems = {};
+          let rowItemKeys = Object.keys(newEl?.rowData || {});
+          for (let [key, value] of Object.entries(updateItems || {})) {
+            if (rowItemKeys.includes(key)) {
+              filterUpdateItems[key] = value;
+            }
+          }
+          newEl.rowData = { ...newEl.rowData, ...filterUpdateItems };
+          return newEl;
+        }
+        return el;
+      });
+      if (onChange) {
+        onChange(_value);
+      }
+      setupdateItems(null);
+    } else if (
+      version === 'v2' &&
+      referenceDependentField &&
+      value &&
+      value.length
+    ) {
+      // 字段联动的value没有带出字段的值，这里判断如果value没有带出字段的值，就走onChane
+      const rowData = value?.[0]?.rowData || {};
+      let noAttrs = false;
+      quoteDataTable.bringOutFieldSchema.forEach((item) => {
+        if (!rowData.hasOwnProperty(item.key)) {
+          noAttrs = true;
+        }
+      });
+      const _value = {
+        value: value?.map((item) => item.rowData[referenceDependentField]),
+        tableData: value?.map((item) => ({
+          low_code_sys_id: item.rowData[referenceDependentField],
+        })),
+      };
+      if (noAttrs) {
+        handleDataChange(_value);
+      }
+    }
+  }, [value, updateItems]);
 
-  // 列状态
-  const [columnState, setColumnState] = useState({})
+  //要展示的数据
+  const showRows = useMemo(() => {
+    // 如果新增一条列表数据，表格显示最后一页数据，处在筛选状态除外
+    if (!_isFilters && (rows?.length > parseInt(dataLength))) {
+      let lastPage = Math.floor(rows?.length / pageSize);
+      const remainder = rows?.length % pageSize;
+      if (remainder == 0) {
+        setCurrentPage(lastPage);
+        lastPage--;
+      } else {
+        setCurrentPage(lastPage + 1);
+      }
+      setDataLength(rows?.length); //存储当前数据条数，用于下次区分变更数据量
+      return rows.slice(lastPage * pageSize, rows?.length);
+    }
+    !_isFilters && setDataLength(rows?.length); //存储当前数据条数，用于下次区分变更数据量
+    return rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  }, [rows, currentPage, pageSize]);
 
+  // all columns is hide
+  const isAllColumnsHide = useMemo(() => {
+    if (!cols || !cols.length) return false;
+    return cols.every((col) => col.hide && !col.show);
+  }, [cols])
 
-  const latestColsRef = useLatest(cols);
+  // 要展示的列数，所有列都隐藏时，不显示添加按钮和表头
+  const showColumns = useMemo(() => {
+    let count = 0;
+    headers?.length > 0 &&
+      headers?.forEach((h) => {
+        // -1是表头，show集合里有-1 或有要展示的单元格时，表头则需要展示
+        // 针对的特殊场景：
+        // 1.把表格所有列隐藏，但表格不隐藏，则把整个表格内容隐藏但是表格的名称显示
+        // 2.把表格某一列隐藏，再把该列的某一行/几行设置为显示，则该列显示，且只显示该一行/几行的单元格，其他行隐藏
+        if (
+          h?.show?.indexOf(-1) > -1 ||
+          h?.show?.length > 0 ||
+          !h?.hide?.length
+        )
+          count++;
+      });
+    return count;
+  }, [headers, rows]);
 
+  // 可以编辑的列
+  const editabledColumns = useMemo(() => {
+    return headers?.filter((col) => !col.disabled && !col.hide)?.length || 0;
+  }, [headers, rows]);
 
-  const latestValueRef = useLatest(value)
+  // 默认最小列宽:
+  // 小于7列时，按容器大小平均分配列宽；
+  // 超过7列时，每列默认宽度为当前容器的7分之1
+  const colWidth = useMemo(() => {
+    const containerWidth = tableEl?.current?.offsetWidth;
+    return containerWidth ? (containerWidth - 2) / 5 : 120;
+  }, [headers]);
 
+  // table操作列样式
+  const tableContentClassName = useMemo(() => {
+    // 没有滚动条时，不显示操作列阴影
+    const clientWidth = tableEl.current?.clientWidth || 0;
+    const scrollWidth = tableEl.current?.scrollWidth || 0;
+    return isRightMost || clientWidth == scrollWidth
+      ? styles['ticket-panel-wrapper']
+      : `${styles['ticket-panel-wrapper']} ${styles['action-col-box-shadow']}`;
+  }, [isRightMost, headers]);
 
-  const setTableColumnDataRange = () => {
-    const setColumnDataRange = async (tableKey, sKey, eKey) => {
-      if (!disabled && fieldCode === tableKey) {
-        try {
-          const timeRangeValue = await actions?.getFieldValue('ChangeSchedule_StartEndTime')
-          const { startDate, endDate } = timeRangeValue || {};
-          setColumnState(prev => {
-            const value = latestValueRef.current;
-            if (!value?.length) return prev
-            const newState = { ...prev };
-            value?.forEach(row => {
-              if (!row?.id) return;
-              
-              if (!newState[row.id]) {
-                newState[row.id] = {}
-              }
-              if (!newState[row.id][sKey]) {
-                newState[row.id][sKey] = {}
-              }
-              if (!newState[row.id][eKey]) {
-                newState[row.id][eKey] = {}
-              }
-              newState[row.id][sKey].dateRange = {
-                dateMaxLimit: { id: 'defined', key: 'defined', label: 'Custom', defined: endDate },
-                dateMinLimit: { id: 'defined', key: 'defined', label: 'Custom', defined: startDate }
-              }
-              newState[row.id][eKey].dateRange = {
-                dateMaxLimit: { id: 'defined', key: 'defined', label: 'Custom', defined: endDate },
-                dateMinLimit: { id: 'defined', key: 'defined', label: 'Custom', defined: startDate }
-              }
-              
-              const startTime = Number(row.rowData?.[sKey]);
-              const endTime = Number(row.rowData?.[eKey]);
-              
-              if (!isNaN(startTime) && startTime > 0) {
-                newState[row.id][eKey].dateRange.dateMinLimit.defined = startTime + 1000 * 60;
-              }
-              if (!isNaN(endTime) && endTime > 0) {
-                newState[row.id][sKey].dateRange.dateMaxLimit.defined = endTime - 1000 * 60
-              }
-            })
-            return newState;
-          })
-        } catch (error) {
-          console.error('Error in setColumnDataRange:', error);
-        }
-      };
-    }
-    setColumnDataRange('A_Pre_Implementation_Tasks_Activ', 'A_Start_Time', 'A_End_Time')
-    setColumnDataRange('B_Implementation_Tasks_Activ', 'B_Start_Time', 'B_End_Time')
-    setColumnDataRange('C_Post_Implementation_Plan', 'C_Start_Time', 'C_End_Time')
-    setColumnDataRange('F_Reversion_Plan', 'F_Start_Time', 'F_End_Time')
-  }
+  // 是否有关联数据的权限
+  // 是否有移除数据的权限（当前用户新增的数据未提交前都可移除，其它数据则看权限）
+  // 查看数据的权限
+  const [addedable, removeable, viewabled] = useMemo(() => {
+    // 新需求-12-25：默认都可编辑
+    return [true, true, true];
+    // return [
+    //   !!referenceTableFormMap?.[fieldCode]?.insert,
+    //   !!referenceTableFormMap?.[fieldCode]?.delete,
+    //   !!referenceTableFormMap?.[fieldCode]?.read,
+    // ]
+  }, [referenceTableFormMap]);
 
+  // 表格引用新数据表的依赖字段
+  const referenceDependentField = useMemo(() => {
+    if (version === 'v2' && columns && columns.length > 0) {
+      const column = columns[0];
+      const referenceDependentField =
+        column?.['x-props']?.referenceAttr?.referenceDependentField || '';
+      setSelectedTableData(
+        value?.map((item) => item.rowData[referenceDependentField])
+      );
+      return referenceDependentField;
+    } else {
+      return '';
+    }
+  }, [columns]);
+  /**
+   * table滚动条事件
+   */
+  const onTableScroll = () => {
+    const scrollLeft = tableEl.current?.scrollLeft || 0;
+    const clientWidth = tableEl.current?.clientWidth || 0;
+    const scrollWidth = (tableEl.current?.scrollWidth || 0) - 2;
+    setIsRightMost(scrollLeft + clientWidth > scrollWidth);
+  };
 
-  useFormEffects(($, _) => {
-    if(['A_Pre_Implementation_Tasks_Activ', 'B_Implementation_Tasks_Activ', 'C_Post_Implementation_Plan', 'F_Reversion_Plan'].includes(fieldCode)){
-        $(LifeCycleTypes.ON_FIELD_VALUE_CHANGE, 'ChangeSchedule_StartEndTime').subscribe((fieldState) => {
-          setTableColumnDataRange()
-        });
-    }
-  });
-  
-  useEffect(() => {
-    setTableColumnDataRange()
-  }, [value])
+  /**
+   * 获取拖拽后的列宽
+   * @param {*} param0
+   * @returns
+   */
+  const getWidth = ({ defaultColSetting, id, getProps, column }) => {
+    const { inputVal, initVal } = defaultColSetting || {};
+    // colState存放拖拽过的列信息， inputVal是流程配置的默认列宽， initVal是计算出来的默认初始列宽
+    let resizingWidth = colState?.columnResizing?.columnWidths?.[id] || inputVal || initVal;
+    if (isNaN(resizingWidth)) {
+      resizingWidth = -1
+    }
+    let resizingStyle = getProps();
+    let minWidth = 150;
+    switch (column?.['x-component']) {
+      case 'AUTO_NUMBER':
+        minWidth = 50;
+        break;
+      case 'DATE':
+        minWidth = 200;
+        break;
+    }
+    resizingStyle.style.width = resizingWidth < 0 ? colWidth : resizingWidth;
+    resizingStyle.style.minWidth = colMinWidth || minWidth;
+    if (inputVal || colState?.columnResizing?.columnWidths?.[id])
+      resizingStyle.style['flexGrow'] = 0; // 拖拽过、设置了列宽的列，不延展
+    return resizingStyle;
+  };
 
+  const handleExport = (e) => {
+    setExportBtnLoading(true);
+    uploadRef.current.export(e, () => {
+      setExportBtnLoading(false);
+    });
+  };
 
-  // 字段联动返回的列状态：必填、隐藏、只读
-  useEffect(() => {
-    // ----获取默认列宽 ---- start -------
-    let containerClientWidth =
-      document.getElementById(tableEleId)?.clientWidth -
-      (!useByChanges && !readOnly ? 30 : 5);
-    let containerEl = containerClientWidth / 7;
-    let totalCols = columns?.length;
-    if (totalCols && totalCols < 8) {
-      let totalDefaultWidth = 0;
-      let totalCount = 0;
-      // 设置了默认列宽的总长
-      columns?.map?.((col) => {
-        let inputVal = col['x-props']?.['defaultColWidth']?.inputVal;
-        if (inputVal) {
-          totalDefaultWidth += inputVal;
-          totalCount++;
-        }
-      });
-      let restWidth = containerClientWidth - totalDefaultWidth; // 剩余宽度
-      if (restWidth > (totalCols - totalCount) * 80)
-        containerEl = restWidth / (totalCols - totalCount); // 考虑交互性和美观性，最小列宽为80
-    }
-    // ----获取默认列宽 ---- end -------
-    // 每次都需要用最原始的columns过滤
-    const _cols = columns?.map((col, index) => {
-      let inputVal = col['x-props']?.['defaultColWidth']?.inputVal;
-      let initVal = containerEl;
-      let newCol = {
-        ...col,
-        width: inputVal || initVal || 120,
-        Header: col?.title || '',
-        accessor: col?.key,
-      };
-      if (!newCol['x-props']) {
-        newCol['x-props'] = {};
-      }
-      newCol['x-props']['defaultColWidth'] = { inputVal, initVal };
-      if (!checkType.isEmpty(linkCol)) {
-        newCol = {
-          ...newCol,
-          ...(linkCol?.[col?.key] || {}),
-        };
-      }
-      return newCol;
-    });
-    setCols(_cols);
-  }, [linkCol, fieldCode]);
+  const handleImportSubmit = (data = []) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // 表格赋值
+        actions.setFieldValue(fieldCode, [...(value || []), ...(data || [])]);
+        resolve();
+      } catch (err) {
+        console.error(err);
+        reject(err);
+      }
+    });
+  };
 
-  useAsyncEffect(async () => {
-    if (tableEdit === 'form') return;
-    let newValue = cloneDeep(value || []) || [];
-    const _cols = getCols()
-    // 字段联动返回的单元格：清空值、设置值
-    // 项目上有一个场景是通过一个表格列给另一个表格列赋值
-    // 他们想要的效果就是第一个表格有的行第二个表格也要有，所以我们遍历字段联动结果linkVal
-    // 把没有的行补上
-    if (!checkType.isEmpty(linkVal)) {
-      for (const [k, v] of Object.entries(linkVal)) {
-        if (k == -1) continue; // -1 用在新增行数据的时候
-        let rawData = newValue.find(n => n.rowNum == k);
-        if (!rawData) {
-          rawData = {
-            id: helper.guid(15),
-            rowNum: k + '',
-            rowData: await setDefaultToCell(getNewRowData(), _cols, { workOrderId, formModelId, value: newValue }),
-          }
-          newValue.push(rawData)
-        }
-        Object.assign(rawData.rowData, v)
-      }
-    }
-    // 字段联动返回的单元格：追加选项
-    if (!checkType.isEmpty(linkAdditionOptions)) {
-      newValue = (newValue || [])?.map?.((val) => {
-        const linkRowData = linkAdditionOptions?.[val?.rowNum];
-        if (linkRowData) {
-          let _rowData = {};
-          for (const fieldCode in val?.rowData) {
-            if (
-              !checkType.isEmpty(linkRowData) &&
-              Object.keys(linkRowData)?.indexOf(fieldCode) > -1
-            ) {
-              const oldData = [...(val?.rowData?.[fieldCode] || [])];
-              const additionData = [...(linkRowData?.[fieldCode] || [])];
-              let data = oldData;
-              // 成员/成员组去重
-              const key = (data?.length > 0 ? data : additionData)?.[0]?.userId
-                ? 'userId'
-                : (data?.length > 0 ? data : additionData)?.[0]?.groupId
-                  ? 'groupId'
-                  : undefined;
-              const ids = key
-                ? convertToPrimaryArray(data || [], key)
-                : undefined;
-              ids &&
-                additionData?.forEach((m) => {
-                  if (ids?.indexOf(m?.[key] + '') == -1) data = [...data, m];
-                });
-              _rowData[fieldCode] = ids
-                ? data
-                : Array.from(new Set([...oldData, ...additionData]));
-            } else {
-              _rowData[fieldCode] = val?.rowData?.[fieldCode];
-            }
-          }
-          return { ...val, rowData: _rowData };
-        } else {
-          return { ...val };
-        }
-      });
-    }
-    actions?.setFieldValue(fieldCode, newValue);
-  }, [linkVal, linkAdditionOptions]);
+  // 分页会导致不在当前页的组件被卸载，某些字段联动的结果会丢失
+  // 如字段联动-改变选项 等动作，并未直接修改schema,
+  // 这时候若是切换了页码会致使原来的组件被卸载，这个结果丢失
+  // 所以我们在页码改变的时候重新去设置一下
+  const handleChangePageSize = (current, pageSize) => {
+    if (current === currentPage) return;
+    if (
+      linkTableRef &&
+      linkTableRef.current &&
+      linkTableRef.current[fieldCode]
+    ) {
+      if (!linkageChangeOptions) linkageChangeOptions = {};
+      Object.entries(linkTableRef.current[fieldCode].linkageChangeOptions || {})
+        .slice(0, current * pageSize)
+        .forEach(([k, v]) => {
+          linkageChangeOptions[k] = { ...v };
+        });
+      linkTable.linkageChangeOptions = { ...linkageChangeOptions };
+    }
+  };
 
-  const columnsKVMap = useMemo(() => {
-    return helper.convertToKeyVal(columns || [], 'key');
-  }, [columns]);
+  // 数据表弹窗选择
+  const handleDataChange = async (tableDataValue = {}) => {
+    const mainKey = 'low_code_sys_id';
+    const { tableData = [] } = tableDataValue;
+    const tableDataTrans = tableData.map((item) => {
+      return {
+        ...item,
+        [mainKey]: item[mainKey].value || item[mainKey],
+      };
+    });
+    let rows = [];
+    const sysIds = tableDataTrans.map((item) => item[mainKey]);
+    // if(sysIds.length < 1) return
+    let dosmData = {};
+    if (sysIds.length > 0) {
+      setRefDataLoading(true);
+      dosmData = await getReferenceData({
+        tableName: dataTableName,
+        columnValues: sysIds,
+      });
+      setRefDataLoading(false);
+    }
+    const { data: transData = {} } = dosmData;
+    // 引用的表格有一列隐藏数据，为带出字段的引用字段，意思就是使用这个字段可以带出其他所有列数据
+    Object.values(transData).forEach((dataItem) => {
+      let tableItem = {};
+      quoteDataTable.bringOutFieldSchema.forEach((item) => {
+        tableItem[item.key] = dataItem[item['x-props'].referenceAttr.column];
+      });
+      tableItem[referenceDependentField] = dataItem[mainKey];
+      rows.push({
+        ...tableItem,
+        [isNewData]: true, // 标记这个数据是新关联的
+      });
+      // if(!selectedTableData.includes(dataItem[mainKey])){
+      //   rows.push({
+      //     ...tableItem,
+      //     [isNewData]: true, // 标记这个数据是新关联的
+      //   })
+      // }
+    });
+    setSelectedTableData([...selectedTableData, ...sysIds]);
+    // rows.length && addRows(rows)
+    const newRows = await formatRows(rows);
+    onChange(newRows);
+    // 触发字段联动
+    const formState = await actions.getFormState();
+    const formValues = { ...formState.values, ...baseActions.getBaseValue() };
+    for (let i = 0; i < rows?.length; i++) {
+      // 遍历导入的表格数据
+      for (const k in rows[i]) {
+        if (rows[i]?.hasOwnProperty?.(k) && k != referenceDependentField) {
+          // 触发字段联动
+          await onFieldLinkage({
+            linkage,
+            fieldState: {
+              fieldCode: k,
+              values: await actions.getFieldValue(fieldCode),
+              value: await actions.getFieldValue(fieldCode),
+              props: { key: fieldCode },
+              path: fieldCode,
+              name: fieldCode,
+            },
+            values: formValues,
+            actions,
+          });
+        }
+      }
+    }
+  };
+  // 移除单条数据-数据表
+  const removeRowForDataTable = (index, row) => {
+    selectDataTableRef.current.setSelectedKeys((pre) => {
+      const preC = JSON.parse(JSON.stringify(pre));
+      preC.splice(index, 1);
+      return preC;
+    });
+    setSelectedTableData((pre) => {
+      const preC = JSON.parse(JSON.stringify(pre));
+      preC.splice(index, 1);
+      return preC;
+    });
+    delRow(index);
+  };
 
-  useEffect(() => {
-    setData(() => {
-      let newData = getTableData(value, columns);
-      checkTable(newData);
-      if (handleValueToLabel) {
-        const formLocalStorageMap =
-          JSON.parse(localStorage.getItem('formLocalStorageMap') || '{}') || {};
-        newData.forEach((row) => {
-          Object.entries(row || {}).forEach(([k, v]) => {
-            if (v) {
-              const col = columnsKVMap[k];
-              if (
-                col &&
-                ['SELECT', 'SELECT_MANY'].includes(col['x-component'])
-              ) {
-                const _value = handleValueToLabel(
-                  v,
-                  formLocalStorageMap?.[k] || []
-                );
-                if (Array.isArray(v)) {
-                  if (!v.length) {
-                    row[`${k}_value`] = [];
-                  } else {
-                    row[`${k}_value`] = _value || row[`${k}_value`];
-                  }
-                } else {
-                  if (!v) {
-                    row[`${k}_value`] = '';
-                  } else {
-                    row[`${k}_value`] = _value || row[`${k}_value`];
-                  }
-                }
-              } else if (col && col['x-component'] === 'MULTI_SELECT') {
-                row[`${k}_value`] = getLabel(
-                  v,
-                  col['x-props']?.dataSource || []
-                );
-              } else if (col && col['x-component'] === 'GROUP') {
-                row[`${k}_search`] = (v || [])?.map?.((_v) => {
-                  if (_v.userId) {
-                    return _v.groupId + '|' + _v.userId;
-                  } else {
-                    return _v.groupId;
-                  }
-                });
-              } else if (col && col['x-component'] === 'MEMBER') {
-                row[`${k}_search`] = (v || [])?.map?.((_v) => _v.userId);
-              }
-            }
-          });
-        });
-      }
-      return newData;
-    });
-  }, [value, handleValueToLabel, columns, promptContent]);
+  // 新数据表回显value
+  const dataTabelValue = () => {
+    if (version === 'v2') {
+      if (value && value.length) {
+        return value.map((item) => item.rowData[referenceDependentField]);
+      } else {
+        return value;
+      }
+    }
+    return value;
+  };
+  const [tableRowEditVisible, setTableRowEditVisible] = useState(false)
+  const [currentRow, setCurrentRow] = useState(undefined)
+  const onEdit = (row) => {
+    setCurrentRow(row)
+    setTableRowEditVisible(true)
+  }
+  const onAddRow = useMemoizedFn(() => {
+    // 弹窗编辑行
+    if (tableEdit && tableEdit === 'form') {
+      getNewRow().then(res => {
+        res.allCells = cols
+        res.values = res.rowData
+        setCurrentRow(res)
+        setTableRowEditVisible(true)
+      })
+    } else {
+      addRow()
+    }
+  })
+  const renderRowFormTitle = () => {
+    const preDisabled = () => {
+      if (currentRow?.index === 0) return true
+      if (currentRow?.index === undefined && rows.length === 0) return true
+      return false
+    }
+    const nextDisabled = () => {
+      if (rows[rows.length - 1]?.id === currentRow?.id) return true
+      if (currentRow?.index === undefined) return true
+      return false
+    }
+    return <div className={styles['row-form-title']}>
+      <span>{fieldName}</span>
+      <div className={styles['row-form-title-operator']}>
+        <Space>
+          <Button size='small' shape="circle" disabled={preDisabled()} onClick={() => {
+            const findRow = rows.find(i => i.index === (currentRow?.index - 1))
+            setCurrentRow(findRow || rows[rows.length - 1])
+          }}>
+            <DoAppIcon type="left" style={{ marginLeft: '-2px' }} />
+          </Button>
+          <Button size='small' disabled={nextDisabled()} shape="circle" onClick={() => {
+            setCurrentRow(rows.find(i => i.index === (currentRow?.index + 1)))
+          }}>
+            <DoAppIcon type="right" style={{ marginLeft: '2px' }} />
+          </Button>
+        </Space>
+      </div>
+    </div>
+  }
+  const renderOprater = (row, rowIdx) => {
+    if (isDataTable) {
+      if (useByChanges || readOnly) {
+        return (
+          <div key={row?.original?.[$rowKey]} className={styles['del-btn']}>
+            {viewabled && isDataTable && (
+              <span
+                onClick={() => {
+                  setCurrentViewData(row.original);
+                  setDrawerVisible(true);
+                }}
+                className='i-btn'
+              >
+                {langUtil.t(
+                  intl.get('7c1dda3c-d117-4089-ac1f-2fa18072b078').d('查看详情')
+                )}
+              </span>
+            )}
+          </div>
+        );
+      } else {
+        return (
+          <div key={row?.original?.[$rowKey]} className={styles['del-btn']}>
+            {btnPermission?.flag &&
+              rowIdx >= btnPermission?.disabledDelMaxRow &&
+              showColumns != 0 &&
+              (row.original[isNewData] || removeable) ? (
+              <Popconfirm
+                title={langUtil.t(
+                  intl
+                    .get('3a04d5d4-aa3b-4493-b4b2-1a9209ffb523')
+                    .d('是否确认删除该行？')
+                )}
+                onConfirm={() => removeRowForDataTable(row?.index, row)}
+              >
+                <span className='i-btn'>
+                  {langUtil.t(
+                    intl.get('2e0705c0-2c31-49e6-bb8e-0de22443e9f3').d('移除')
+                  )}
+                </span>
+              </Popconfirm>
+            ) : null}
 
-  // 提交的时候校验表单啊
-  useEffect(() => {
-    const checkFormData = (data) => {
-      checkTable && checkTable(getTableData(value, columns), data?.isCmdb);
-    }
-    eventManager.off(`on-table-validate-${fieldCode}`, checkFormData);
-    eventManager.on(`on-table-validate-${fieldCode}`, checkFormData);
-    return () => {
-      eventManager.off(`on-table-validate-${fieldCode}`, checkFormData);
-    };
-  }, [value, columns, promptContent]);
+            {viewabled && (
+              <span
+                onClick={() => {
+                  setCurrentViewData(row.original);
+                  setDrawerVisible(true);
+                }}
+                className='i-btn'
+              >
+                {langUtil.t(
+                  intl.get('7c1dda3c-d117-4089-ac1f-2fa18072b078').d('查看详情')
+                )}
+              </span>
+            )}
+          </div>
+        );
+      }
+    } else {
+      if (useByChanges || readOnly) return null;
+      return (
+        <div key={row?.original?.[$rowKey]} className={styles['del-btn']} style={{ padding: '0 12px' }}>
+          {
+            tableEdit === 'form' && (
+              <Icon type="form" className='i-btn' onClick={() => onEdit(row)} />
+            )
+          }
+          {btnPermission?.flag &&
+            rowIdx >= btnPermission?.disabledDelMaxRow &&
+            showColumns != 0 &&
+            row?.original?.[$deleteable] !== false ? (
+            <Popconfirm
+              title={langUtil.t(
+                intl
+                  .get('3a04d5d4-aa3b-4493-b4b2-1a9209ffb523')
+                  .d('是否确认删除该行？')
+              )}
+              onConfirm={() => delRow(row?.index, () => {
+                if (row?.index % pageSize === 0 && row?.index === rows?.length - 1 && currentPage > 1) {
+                  setCurrentPage(currentPage - 1)
+                }
+              })}
+            >
+              <DoAppIcon type='shanchu' className='i-btn' />
+            </Popconfirm>
+          ) : (
+            (row?.original?.[$deleteable] !== false && disabled != true) && (
+              <DoAppIcon type='shanchu' className='i-btn' />
+            )
+          )}
 
-  /**
-   * 校验表格
-   */
-  const checkTable = (newData, isCmdb) => {
-    // promptContent是后端给我们的校验提示，走下面的逻辑会覆盖掉该错误提示
-    if (promptContent) return;
-    if (tableEdit === 'form') return; // 表单编辑模式不校验
-    const _cols = helper.convertToKeyVal(latestColsRef.current, 'key');
-    let errList = [];
-    let hasErr = false;
-    let checkAll = false;
-    Array.isArray(value) &&
-      value?.forEach((val, rowNum) => {
-        errList[rowNum] = {};
-        for (const key in _cols) {
-          // 隐藏起来的字段就不用校验了啊！！！
-          if (_cols[key].hide) continue;
-          const needCheckRequired =
-            requiredCells?.[rowNum]?.indexOf(key) > -1 ||
-            val?.needCheck === null ||
-            isCmdb;
-          let error = registerValidationRules(
-            _cols?.[key],
-            val?.rowData?.[key],
-            rowNum,
-            newData,
-            needCheckRequired,
-            excludeCheckRow
-          );
-          errList[rowNum][key] = error;
-          if (error) hasErr = true;
-        }
-        if (!checkAll) checkAll = val?.needCheck === null;
-      });
-    setErrList(errList);
-    // 配置项标签 -- 嵌入表格做的兼容处理
-    if (setValidatorBool) {
-      setValidatorBool(fieldCode, hasErr);
-    }
-    actions?.setFieldState(fieldCode, (state) => {
-      // editable = false的时候不会校验
-      if (hasErr) {
-        state.editable = true;
-        // 我们的表格操作列权限是通过readOnly来控制的，这里我们把editable设置成true的时候，disabled属性会跟着变
-        // readOnly属性则丢失，即使在这里再去设置（readOnly-true, disabled=true）也是无济于事的
-        // 只有通过FormPath去设置disabled和readOnly属性，才能保证这俩属性不随着editable属性的变化而变化
-        FormPath.setIn(state, 'props.x-props.disabled', disabled);
-        FormPath.setIn(state, 'props.x-props.readOnly', readOnly);
-      }
-      // dbs--隐藏表格提示内容
-      const ErrorMsg = () => {
-        return <span style={{ display: 'none' }}>{langUtil.t(
-          intl
-            .get('ed1a1ab9-a0a0-4666-a9ca-1204ef992d0e')
-            .d('表格字段填写错误')
-        )}</span>
-      }
-      state.errors = hasErr
-        ? [
-          <ErrorMsg />
-        ]
-        : [];
-      // 在这个里给表格设置errors会给formitem组件加一个'has-error'的类
-      // 在代码中某处设置了一个样式，就是在有has-error类下给下拉框加个红色的边框
-      // 这样会导致，在表格个有has-error时，表格里面所有的下拉框都加了个红色边框，甚至连分页组件都有红色边框
-      // 而我们不知道为什么会加这个样式，有不能去掉
-      // 所以我们解决方案如下：
-      // 1.通过修改样式去掉表格formItem的has-error类
-      // 2.在校验不通过的表格列具体的单元格中加上类has-error
-      setTimeout(() => {
-        document
-          ?.querySelector(`.com-path-${fieldCode}`)
-          ?.querySelector('.ant-form-item-control.has-error')
-          ?.classList?.remove('has-error');
-        const explain = document
-          ?.querySelector(`.com-path-${fieldCode}`)
-          ?.querySelector('.ant-form-explain');
-        if (explain) {
-          explain.style.color = '#f5222d';
-        }
-      }, 100);
-    });
-  };
+          {(hasAddBtn !== false && disabled != true) && (
+            <DoAppIcon
+              className='i-btn'
+              type='fuzhi'
+              onClick={(e) => copyRow(e, row)}
+            />
+          )}
+        </div>
+      );
+    }
+  };
 
+  useEffect(() => {
+    if (!Array.isArray(value) && !value) {
+      setInitRowsNum(startNum);
+    }
+  }, [value])
 
-  const getNewRow = async (row, latestValue) => {
-    const _cols = getCols();
-    const rowData = await setDefaultToCell(getNewRowData(_cols), _cols, { workOrderId, formModelId, value: latestValue ?? value }, row); 
-    const data = {
-      id: rowData[$rowKey],
-      rowNum: (value?.length || 0) + '',
-      rowData,
-    }
-    return data
-  }
+  useAsyncEffect(async () => {
+    if (initRowsNum) {
+      let _rows = [];
+      for (let i = 0; i < initRowsNum; i++) {
+        const newRows = await getNewRow(null, i > 0 ? [_rows[_rows.length - 1]] : undefined);
+        _rows.push({
+          ...newRows,
+          rowNum: i?.toString()
+        })
+      }
+      onChange(_rows);
+    }
+  }, [initRowsNum])
 
-  /**
-   * 新增行
-   */
-  const addRow = async (e, row, rowNum) => {
-    setAdding(true)
-    try {
-      const newRow = await getNewRow(row)
-      if (tableEdit != 'form' && linkTable && linkTableRef && linkTableRef.current && linkTableRef.current[fieldCode]) {
-        // 下拉选项
-        if (linkTableRef.current[fieldCode]?.linkOption) {
-          if (!linkOption) linkOption = {};
-          linkOption[newRow.rowNum] = {
-            ...(linkTableRef.current[fieldCode].linkOption[rowNum ?? -1] || {}),
-          };
-          linkTable.linkOption = { ...linkOption };
-        }
-        // 追加字段值
-        if (linkTableRef.current[fieldCode]?.linkAdditionOptions) {
-          if (!linkAdditionOptions) linkAdditionOptions = {};
-          linkAdditionOptions[newRow.rowNum] = {
-            ...(linkTableRef.current[fieldCode].linkAdditionOptions[rowNum ?? -1] || {}),
-          };
-          linkTable.linkAdditionOptions = { ...linkAdditionOptions };
-        }
-        if (linkTableRef.current[fieldCode]?.linkVal) {
-          // -1里面放的是我们字段联动对于整个表格列的值的设置
-          // 我们在新增行的时候把这些值同时设置上
-          const val = linkTableRef.current[fieldCode]?.linkVal?.[-1]
-          Object.assign(newRow.rowData, val)
-        }
-        // 改变字段下拉选项
-        if (linkTableRef.current[fieldCode]?.linkageChangeOptions) {
-          if (!linkageChangeOptions) linkageChangeOptions = {};
-          linkageChangeOptions[newRow.rowNum] = {
-            ...(linkTableRef.current[fieldCode].linkageChangeOptions[rowNum ?? -1] || {}),
-          };
-          linkTable.linkageChangeOptions = { ...linkageChangeOptions };
-        }
-        linkTableRef.current[fieldCode] = linkTable
-      }
-      newRow.rowIsDel = true
-      onChange([...(value || []), newRow]);
-      setChangedColumnField && setChangedColumnField(fieldCode, fieldCode);
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setAdding(false)
-    }
-  };
-  /**
-   * 复制行
-   * @param {*} row 被复制的行数据
-   */
-  const copyRow = async (e, row) => {
-    return addRow(e, row.values, row.id);
-  };
+  const onSortOver = ({ index, newIndex, oldIndex, nodes }) => {
+    if (_rows?.[newIndex]?.original?.[$deleteable] === false) return;
+    const parentNode = nodes[0].node.parentNode;
+    const overNode = nodes[newIndex].node;
+    const moveNode = nodes[index].node;
+    let top = overNode.offsetTop
+    if (overNode.clientHeight > moveNode.clientHeight) {
+      top = overNode.offsetTop + overNode.clientHeight - moveNode.clientHeight
+    } else if (moveNode.clientHeight > overNode.clientHeight) {
+      top = overNode.offsetTop - (moveNode.clientHeight - overNode.clientHeight)
+    }
+    if (top < 0) {
+      top = 0
+    }
+    parentNode.style.setProperty('--moveY', `${top}px`);
+    parentNode.style.setProperty('--height', `${moveNode.clientHeight}px`);
+    parentNode.classList.add(styles['move-active']);
+  };
 
-  /**
-   * 删除行
-   * @param {*} rowNum 行号
-   */
-  const delRow = async (rowNum, cb) => {
-    let _value = value
-      ?.filter((v) => v?.rowNum != rowNum)
-      ?.map((v, idx) => ({ ...v, rowNum: idx }));
+  const onSortEnd = (e) => {
+    const { nodes, newIndex } = e;
+    nodes[0].node.parentNode.classList.remove(styles['move-active']);
+    nodes[0].node.parentNode.style.setProperty('--moveY', '0px');
+    tableEl.current.classList.remove(styles['moving'])
 
-    let autoNumberList = [];
-    let autoNumberValue = {};
-    // 如果isRenumbering等于true，说明当前表格内有自动编号字段，并且 删除行是否重新排序 需要重新排序
-    let isRenumbering = false;
+    if (_rows?.[newIndex]?.original?.[$deleteable] === false) return;
 
-    columns?.forEach((c) => {
-      if (c?.['x-component'] === EnumType.autoNumber) {
-        if (c?.['x-props']?.renumbering === 'true') {
-          autoNumberList.push({
-            code: c?.key,
-            autoNumberInfo: { ...c?.['x-props']?.autoNumberRule },
-            renumbering: c?.['x-props']?.renumbering,
-          });
-          autoNumberValue[c?.key] = _value.map((item) => item?.rowData[c?.key]);
-          isRenumbering = true;
-        }
-      }
-    });
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const currPageValue = value.slice(startIndex, endIndex)
 
-    if (isRenumbering) {
-      let params = {
-        workOrderId,
-        autoNumberList,
-        autoNumberValue,
-        mdlFormTemplateId: formModelId,
-      };
-      let resp = await deleteTableAutoNumber(params);
-      const data = resp?.data || {};
-      _value = _value?.map((item, idx) => {
-        let target = data[idx] || {};
-        for (let key in target) {
-          item.rowData[key] = target[key];
-        }
-        return item;
-      });
-    }
+    const fixedCols = [];
+    cols.forEach(col => {
+      if ([EnumType.autoNumber].includes(col['x-component'])) {
+        fixedCols.push(col.key)
+      }
+    })
+    const fixedValueArray = currPageValue.map(v => {
+      const fixedRowData = {}
+      fixedCols.forEach(k => {
+        fixedRowData[k] = v?.rowData?.[k]
+      })
+      return {
+        rowNum: v.rowNum,
+        rowData: fixedRowData
+      }
+    })
+    const sortedArray = arrayMove(currPageValue, e.oldIndex, e.newIndex)
+    sortedArray.forEach((item, index) => {
+      item.rowNum = fixedValueArray[index].rowNum
+      item.rowData = {
+        ...item.rowData,
+        ...fixedValueArray[index].rowData
+      }
+    })
+    value.splice(startIndex, endIndex, ...sortedArray)
+    setData(value.map(v => ({ ...v.rowData })))
+    actions.setFieldValue(fieldCode, [...value])
+    setRadKey(nanoid())
+  }
 
-    if (linkTableRef && linkTableRef.current && linkTableRef.current[fieldCode]) {
-      // 下拉选项
-      if (linkTableRef.current[fieldCode]?.linkOption) {
-        if (linkOption) {
-          delete linkOption[rowNum]
-        }
-      }
-      // 追加字段值
-      if (linkTableRef.current[fieldCode]?.linkAdditionOptions) {
-        if (linkAdditionOptions) {
-          delete linkAdditionOptions[rowNum];
-        }
-      }
-      if (linkTableRef.current[fieldCode]?.linkVal) {
-        if (linkVal) {
-          delete linkVal[rowNum];
-        }
-      }
-      Object.values(linkTable)?.forEach(v => {
-        if (isObject(v)) {
-          Object.keys(v || {})?.forEach?.(_k => {
-            if (_k > rowNum) {
-              v[_k - 1] = v[_k];
-              delete v[_k]
-            }
-          })
-        }
-      })
-      linkTableRef.current[fieldCode] = linkTable
-    }
+  const onSortStart = () => {
+    tableEl.current.classList.add(styles['moving'])
+  }
 
-    // console.log(rowNum, value, _value, 'rowNum');
-    // 930修改
-    // 传null的时候后端不会保存，就会设置成初始的值，导致表格行删不掉
-    // 后端说是传个[]
-    onChange(_value?.length > 0 ? _value : []);
-    setChangedColumnField && setChangedColumnField(fieldCode, fieldCode);
-    cb && cb()
-  };
+  return (
+    <>
+      <div
+        className={`${styles['dynamic-table-container']} ${isBusinessPanel ? '' : styles['ticket']
+          }`}
+      >
+        {/* 导入导出 */}
+        {(isSupportExport || isSupportImport) && valid && showColumns > 0 && (
+          <div className={styles['tool-bar']}>
+            {!readOnly &&
+              isSupportImport &&
+              editabledColumns > 0 &&
+              btnPermission?.flag && (
+                <Button type='link' onClick={() => uploadRef.current.show()}>
+                  {langUtil.t(
+                    intl.get('e7e28773-1133-41f7-9e97-01bed6dae4ae').d('导入')
+                  )}
+                </Button>
+              )}
 
-  const userInfoMsg = useMemo(() => {
-    let obj = {};
-    columns?.forEach((v) => {
-      obj[v.id] = v;
-    });
-    return obj;
-  }, [columns]);
+            {isSupportExport &&
+              ((rows && rows?.length > 0) || isBusinessPanel) && (
+                <Button
+                  style={{ marginLeft: '16px' }}
+                  type='link'
+                  loading={exportBtnLoading}
+                  onClick={handleExport}
+                >
+                  {langUtil.t(
+                    intl.get('72d79e31-d6c8-4852-a43c-85a3ad2a45f0').d('导出')
+                  )}
+                </Button>
+              )}
+          </div>
+        )}
 
-  /**
-   * 单元格onChange事件
-   * @param {*} columnCode 列code
-   * @param {*} rowNum 行号
-   * @param {*} val 值
-   */
-  const onCellChange = async (columnCode, rowNum, val, label, needTriggerFieldlinkage = true) => {
-    localStorage.setItem('currentEditRow', rowNum);
-    const _value = (value || [])?.map((v) => {
-      if (v?.rowNum != rowNum) {
-        return { ...v };
-      } else {
-        const _rowData = {
-          [columnCode]: val,
-        };
-        if (label) {
-          _rowData[`${columnCode}_value`] = label;
-        }
-        return {
-          ...v,
-          rowData: {
-            ...v?.rowData,
-            ..._rowData,
-          },
-        };
-      }
-    });
-    const xProps = userInfoMsg?.[columnCode]?.['x-props'] || {};
-    let selectedInfo = xProps?.['memberMes']?.['selected'] || [];
-    const componentType = userInfoMsg?.[columnCode]?.['x-component'];
-    if (
-      (componentType == 'MEMBER' || componentType == 'GROUP') &&
-      selectedInfo?.length
-    ) {
-      if (componentType == 'GROUP' && xProps.selectType === 'group') {
-        // 同步成员组信息
-        const gid = val?.[0]?.['groupId'];
-        const subFieldList = columns.filter(c => c.userParentId == columnCode) || []
-        if (subFieldList && subFieldList.length) {
-          const tempData = {}
-          if (gid) {
-            // 查询用户组信息
-            const { data: groupInfo } = await getUserGroupInfoById(gid) || {};
-            Object.assign(tempData, groupInfo)
-            groupInfo.extend?.forEach(ex => {
-              tempData[ex.alias || ex.name] = ex.valueForMember || ex.value
-            })
-            // parentId-上级用户组
-            if (subFieldList.some(s => s.kind === 'parentId') && groupInfo.parentId) {
-              try {
-                const parentGroup = await getUserGroupInfoById(groupInfo.parentId)
-                tempData['parentId'] = [{
-                  groupId: parentGroup?.data?.groupId,
-                  groupName: parentGroup?.data?.groupName
-                }]
-              } catch (err) {
-                console.error(err)
-              }
-            }
-            // leader-用户组组长
-            if (subFieldList.some(s => s.kind === 'leader') && groupInfo.leader) {
-              try {
-                const res = await getUserListByIdsForMember(groupInfo.leader) || {}
-                const userInfo = res?.data?.[0] || {};
-                tempData['leader'] = [{
-                  userId: userInfo.userId,
-                  userName: userInfo.userAlias,
-                }]
-              } catch (err) {
-                console.error(err)
-              }
-            }
-          }
-          const obj = {}
-          subFieldList.forEach(sub => {
-            if (sub.kind === userInfoKind.vip) {
-              if (tempData[sub.kind]) {
-                obj[sub.key] = tempData[sub.kind].toString()
-              } else {
-                obj[sub.key] = null
-              }
-            } else if (sub['x-component'] === EnumType.selectMany) {
-              // 多选类型字段值这里接口返回的是一个字符串，我们处理一下
-              if (tempData[sub.kind]) {
-                obj[sub.key] = Array.isArray(tempData[sub.kind]) ? tempData[sub.kind] : tempData[sub.kind].split(',')
-              } else {
-                obj[sub.key] = null
-              }
-            } else {
-              obj[sub.key] = tempData[sub.kind]
-            }
-          })
-          _value?.forEach((item, index) => {
-            if (item.rowNum == rowNum) {
-              _value[index]['rowData'] = {
-                ...item?.rowData,
-                ...obj,
-              };
-            }
-          });
-          setRequiredCells(getCheckObj({ ...requiredCells }, columnCode, rowNum));
-          onChange(_value);
-          if (needTriggerFieldlinkage) {
-            setChangedColumnField && setChangedColumnField(fieldCode, columnCode);
-          } else {
-            setChangedColumnField && setChangedColumnField(fieldCode, '');
-          }
-        }
-      } else {
-        // 成员且有成员信息
-        const userId = val?.[0]?.['userId'];
-        if (userId || !userId) {
-          const needAddData = columns?.filter(
-            (v) => v.userParentId == columnCode
-          ); //需要添加的成员信息列信息
-          let userList = await getUserListByIdsForMember(userId);
-          let data = userList?.data?.[0] || {};
-          let tempVal = {};
-          if (data.extend && data.extend?.length) {
-            data.extend?.forEach((item) => {
-              if (item.alias) {
-                tempVal[item.alias] = item.valueForMember || item.value;
-              }
-            });
-          }
-          data = {
-            ...data,
-            ...tempVal,
-          };
-          const needObj = {};
-          needAddData?.forEach((v) => {
-            needObj[v.id] = data[v.kind];
-            if (
-              v.kind == userInfoKind.associatedCi ||
-              v.kind === userInfoKind.associatedCiMulti
-            ) {
-              needObj[v.id] = v.kind;
-            }
-          });
-          if (!isEmpty(needObj)) {
-            const res = await getUserSuperiorsByParam(userId);
-            const superiors = res.data || [];
-            if (superiors && superiors.length) {
-              Object.entries(needObj).forEach(([k, v]) => {
-                if (v === userInfoKind.associatedCiMulti) {
-                  needObj[k] = superiors.map((u) => ({
-                    userId: u.id,
-                    userName: u.userAlias,
-                  }));
-                } else if (v === userInfoKind.associatedCi) {
-                  needObj[k] = [
-                    { userId: superiors[0].id, userName: superiors[0].userAlias },
-                  ];
-                }
-              });
-            } else {
-              Object.entries(needObj).forEach(([k, v]) => {
-                if (
-                  [
-                    userInfoKind.associatedCiMulti,
-                    userInfoKind.associatedCi,
-                  ].includes(v)
-                ) {
-                  needObj[k] = [];
-                }
-              });
-            }
-          }
-          _value?.forEach((item, index) => {
-            if (item.rowNum == rowNum) {
-              _value[index]['rowData'] = {
-                ...item?.rowData,
-                ...needObj,
-              };
-            }
-          });
-          setRequiredCells(getCheckObj({ ...requiredCells }, columnCode, rowNum));
-          onChange(_value);
-          if (needTriggerFieldlinkage) {
-            setChangedColumnField && setChangedColumnField(fieldCode, columnCode);
-          } else {
-            setChangedColumnField && setChangedColumnField(fieldCode, '');
-          }
-        }
-      }
-    } else {
-      setRequiredCells(getCheckObj({ ...requiredCells }, columnCode, rowNum));
-      onChange(_value);
-      if (needTriggerFieldlinkage) {
-        setChangedColumnField && setChangedColumnField(fieldCode, columnCode);
-      } else {
-        setChangedColumnField && setChangedColumnField(fieldCode, '');
-      }
-    }
-  };
+        <Spin spinning={refDataLoading}>
+          <div className={styles['dynamic-table']}>
+            {/* 流程配置页的表格 */}
+            {isBusinessPanel ? (
+              <div ref={tableEl} className={styles['business-panel-wrapper']}>
+                <div className={styles['dynamic-table-thead']}>
+                  {(headers || [])?.map((column) => {
+                    const defaultColWidth = column['x-props']?.['defaultColWidth']?.inputVal;
+                    // 悬浮展示的hintType为2
+                    const changeHint = linkTable?.linkageSetFieldHint?.[0]?.[column?.id]
+                    const useChangeHint = changeHint?.hintType == 2
+                    return (
+                      <div
+                        id={column?.id}
+                        key={column?.id}
+                        className={styles['dynamic-table-th']}
+                        style={{
+                          width: `${defaultColWidth || colWidth}px`,
+                          flexGrow: defaultColWidth ? 0 : 1,
+                        }}
+                      >
+                        <span className={styles['dynamic-table-title']}>
+                          {column.render('Header')}
+                          <FormFieldTooltip
+                            fieldHint={useChangeHint ? [changeHint] : column['x-props']?.fieldHint}
+                            fontSize={formLayout?.fontSize}
+                          />
+                        </span>
+                        <span
+                          className={styles['dynamic-table-quote']}
+                          style={{
+                            display: column?.kind ? 'inline-block' : 'none',
+                            fontSize: '18px',
+                            color: '#ffb02c',
+                          }}
+                        >
+                          <DoAppIcon type='yinyong-1' />
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div
+                  {...getTableBodyProps()}
+                  className={styles['dynamic-table-tbody']}
+                >
+                  {(rows || [])?.map((row, rowIdx) => {
+                    prepareRow(row);
+                    return (
+                      <div
+                        key={row?.original?.[$rowKey]}
+                        className={styles['dynamic-table-row']}
+                      >
+                        {row.cells?.map((cell, cellIdx) => {
+                          const { row, column } = cell || {};
+                          const defaultColWidth =
+                            column['x-props']?.['defaultColWidth']?.inputVal;
+                          return (
+                            <span
+                              key={`${column?.key}_${row?.original?.[$rowKey]}`}
+                              className={styles['dynamic-table-col']}
+                              style={{
+                                width: `${defaultColWidth || colWidth}px`,
+                                flexGrow: defaultColWidth ? 0 : 1,
+                              }}
+                            >
+                              {cell.render('Cell')}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
-  /**
-   * 已编辑过的单元格，用于校验必填
-   * @param {*} obj
-   * @param {*} fieldCode 列code
-   * @param {*} rowNum 行号
-   * @returns
-   */
-  const getCheckObj = (obj, fieldCode, rowNum) => {
-    if (!obj[rowNum]) obj[rowNum] = [];
-    if (obj[rowNum]?.indexOf(fieldCode) === -1) obj[rowNum]?.push(fieldCode);
-    return obj;
-  };
+            {/* 工单页的表格 */}
+            {!isBusinessPanel ? (
+              <div
+                className={tableContentClassName}
+                ref={tableEl}
+                onScroll={onTableScroll}
+                id={tableEleId}
+              >
+                <div className={styles['dynamic-table-thead']}>
+                  {
+                    enableRowSort?.includes?.('1') && !readOnly && (
+                      <div className={cls(styles['dynamic-table-th'])} style={{ width: '20px', minWidth: '20px', flex: 0 }} />
+                    )
+                  }
+                  {(headers || [])?.map((column) => {
+                    const theadStyle = getWidth({
+                      defaultColSetting: column['x-props']['defaultColWidth'],
+                      id: column?.id,
+                      getProps: column.getHeaderProps,
+                      column
+                    });
+                    const isShowHeader =
+                      !column?.hide?.length ||
+                      column?.hide?.indexOf(-1) < 0 ||
+                      column?.show?.indexOf(-1) > -1 ||
+                      column?.show?.length > 0 ||
+                      useByChanges;
+                    const isColumnCmdbField = !!column.dpCode; // 当前列是否来自cmdb
+                    let isShowFilterIcon = !(isColumnCmdbField || isCmdbField || isCMDB) && !isDataTable && ['SELECT', 'SELECT_MANY', 'MULTI_SELECT', 'MEMBER', 'GROUP'].includes(column?.['x-component']);
+                    // 这几个表格要禁用掉筛选
+                    if (['A_Pre_Implementation_Tasks_Activ', 'B_Implementation_Tasks_Activ', 'C_Post_Implementation_Plan', 'F_Reversion_Plan'].includes(fieldCode)) {
+                      isShowFilterIcon = false
+                    }
+                    // 悬浮展示的hintType为2
+                    const changeHint = linkTable?.linkageSetFieldHint?.[0]?.[column?.id]
+                    const useChangeHint = changeHint?.hintType == 2
+                    return isShowHeader ? (
+                      <div
+                        id={column?.id}
+                        key={column?.id}
+                        {...theadStyle}
+                        className={cls(styles['dynamic-table-th'], { [styles['dynamic-table-th-filter-icon']]: isShowFilterIcon })}
+                      >
+                        {column?.required ? (
+                          <span
+                            className={styles['dynamic-table-th-required']}
+                          ></span>
+                        ) : null}
+                        <Tooltip
+                          title={column.render('Header')}
+                          placement='topLeft'
+                        >
+                          {column.render('Header')}
+                        </Tooltip>
+                        <FormFieldTooltip
+                          fieldHint={useChangeHint ? [changeHint] : column['x-props']?.fieldHint}
+                          fontSize={formLayout?.fontSize}
+                        />
+                        {isShowFilterIcon && <TableFilterIcon column={column} onChange={onFilters} />}
+                        <div
+                          {...column.getResizerProps()}
+                          className={`${styles['resizer']}`}
+                        />
+                      </div>
+                    ) : null;
+                  })}
+                  {headers?.length > 0 &&
+                    showColumns != 0 &&
+                    !useByChanges &&
+                    (!readOnly || isDataTable) ? (
+                    <div className={styles['action-th']}></div>
+                  ) : null}
+                </div>
+                <SortableList
+                  distance={5}
+                  helperClass='custom-table-row-dragging'
+                  onSortOver={onSortOver}
+                  onSortEnd={onSortEnd}
+                  onSortStart={onSortStart}
+                  helperContainer={tableEl.current}
+                  useDragHandle
+                  key={radKey}
+                  {...getTableBodyProps()}
+                >
+                  {(showRows || [])?.map((row, rowIdx) => {
+                    prepareRow(row);
+                    return (
+                      <SortableItem
+                        key={`item-${row?.original?.[$rowKey]}`}
+                        index={rowIdx}
+                        disabled={readOnly || !enableRowSort?.includes?.('1') || row.original?.[$deleteable] === false}
+                      >
+                        <div className={styles['dynamic-table-row']}>
+                          {
+                            (!readOnly && enableRowSort?.includes?.('1')) && (
+                              <DragHandler
+                                disabled={row.original?.[$deleteable] == false}
+                              />
+                            )
+                          }
+                          {row.cells?.map((cell, cellIdx) => {
+                            const { row, column } = cell || {};
+                            const cellStyle = getWidth({
+                              defaultColSetting:
+                                column['x-props']['defaultColWidth'],
+                              id: column?.id,
+                              getProps: cell.getCellProps,
+                              column
+                            });
+                            let error = errList
+                              ? errList?.[row?.index]?.[column?.key] || ''
+                              : '';
+                            if (error) error = new String(error);
+                            let cellClassName = error
+                              ? `${styles['error']} has-error`
+                              : `${styles['dynamic-table-col']}`;
+                            // 用于改动记录的样式：修改过的单元格为红色
+                            if (Array.isArray(modifiedValue)) {
+                              modifiedValue?.forEach((r) => {
+                                if (
+                                  r.rowNum == row?.index &&
+                                  r?.rowData?.hasOwnProperty(column.id)
+                                )
+                                  cellClassName += ` ${styles['new-val']}`;
+                              });
+                            }
+                            const isShowHeader =
+                              !column?.hide?.length ||
+                              column?.hide?.indexOf(-1) < 0 ||
+                              column?.show?.length > 0 ||
+                              useByChanges;
+                            const isShowCell =
+                              column?.show?.indexOf(rowIdx) > -1 ||
+                              (column?.hide?.indexOf(rowIdx) === undefined
+                                ? -1
+                                : column?.hide?.indexOf(rowIdx)) === -1;
+                            return isShowHeader ? (
+                              <div
+                                {...cellStyle}
+                                className={cellClassName}
+                                key={`${column?.key}_${row?.original?.[$rowKey]}`}
+                              >
+                                {/* 当表格字段没有参与字段联动时，只有初始时会返回show:[-1]【展示表头】，新增行/删除行时，show也不会更新，所以结合hide来展示单元格 */}
+                                {isShowCell ? cell.render('Cell') : null}
+                                <span className={styles['explain']}>
+                                  {error}
+                                </span>
+                              </div>
+                            ) : null;
+                          })}
+                          {!isAllColumnsHide && renderOprater(row, rowIdx)}
+                        </div>
+                      </SortableItem>
+                    );
+                  })}
+                </SortableList>
+              </div>
+            ) : null}
 
-  /**
-   * 批量新增行-仅供数据表选择数据使用
-   */
-  const addRows = async (rows) => {
-    const newRows = [];
-    await rows.map(async (item, index) => {
-      let rowNum = value.length + index;
-      const newRow = {
-        id: helper.guid(15),
-        rowNum: rowNum + '',
-        rowData: await setDefaultToCell(
-          item,
-          cols,
-          { workOrderId, formModelId, value },
-          item
-        ),
-      };
-      newRows.push(newRow);
-    });
-    onChange([...(value || []), ...newRows]);
-    setChangedColumnField && setChangedColumnField(fieldCode, fieldCode);
-  };
-  /**
-   * 根据数据组装表格数据
-   */
-  const formatRows = async (rows) => {
-    const newRows = [];
-    await rows.map(async (item, index) => {
-      let rowNum = index;
-      const newRow = {
-        id: helper.guid(15),
-        rowNum: rowNum + '',
-        rowData: await setDefaultToCell(
-          item,
-          cols,
-          { workOrderId, formModelId, value },
-          item
-        ),
-      };
-      newRows.push(newRow);
-    });
-    return newRows;
-  };
-  // 行数据编辑
-  const onRowChange = (row) => {
-    const _value = (value || [])?.map((v) => {
-      if (v?.rowNum != row.rowNum) {
-        return { ...v };
-      } else {
-        return {
-          ...v,
-          rowData: row.rowData,
-        };
-      }
-    });
-    onChange(_value)
-  }
-  const { getTableProps, getTableBodyProps, state, prepareRow, headers, rows } =
-    useTable(
-      {
-        columns: cols,
-        data: isBusinessPanel ? fakeData : data,
-        defaultColumn,
-        utils,
-        t,
-        onCellChange,
-        disabledRows,
-        formReadOnly: formReadOnly || (tableEdit && tableEdit === 'form'),
-        useByChanges,
-        linkOption,
-        linkageChangeOptions,
-        linkageSetFieldHint,
-        tableKey: fieldCode,
-        setDateRange,
-        columnState
-      },
-      useBlockLayout,
-      useResizeColumns
-    );
-  return {
-    getTableProps,
-    getTableBodyProps,
-    colState: state,
-    rows,
-    cols,
-    headers,
-    prepareRow,
-    addRow,
-    delRow,
-    copyRow,
-    errList,
-    btnPermission,
-    addRows,
-    formatRows,
-    getNewRow,
-    onRowChange,
-    setData,
-    adding
-  };
-}
+            {/* 工单页的分页和添加行 */}
+            {(!isBusinessPanel && !isAllColumnsHide) ? (
+              <div className={styles['footer']}>
+                {btnPermission?.flag &&
+                  headers?.length > 0 &&
+                  showColumns != 0 &&
+                  !useByChanges &&
+                  hasAddBtn !== false &&
+                  !isDataTable &&
+                  !_isFilters ? (
+                  <Button type='link' onClick={onAddRow} loading={adding}>
+                    <DoAppIcon type='dashAddMenu' />
+                    {intl
+                      .get('e450cfc8-7f7b-4694-9bb2-85a618bcb226')
+                      .d('添加行')}
+                  </Button>
+                ) : null}
 
-export default useTableItems;
+                {btnPermission?.flag &&
+                  headers?.length > 0 &&
+                  showColumns != 0 &&
+                  !useByChanges &&
+                  hasAddBtn !== false &&
+                  addedable &&
+                  isDataTable ? (
+                  <Button
+                    type='link'
+                    onClick={() => selectDataTableRef.current.setVisible(true)}
+                  >
+                    <DoAppIcon type='dashAddMenu' />
+                    {intl
+                      .get('dfed63c8-fe9a-4914-a5f3-c25f1f5bb5c4')
+                      .d('关联数据')}
+                  </Button>
+                ) : null}
 
-/**
- * 新的行数据
- * @param {*} cols
- * @returns
- */
-export const getNewRowData = (cols) => {
-  let _rowData = {};
-  let _col = helper.convertToKeyVal(cols, 'key');
-  for (const key in _col) {
-    _rowData[key] = undefined;
-  }
-  _rowData[$rowKey] = helper.guid()
-  return _rowData;
+                <Pagination
+                  showTotal
+                  showQuickJumper
+                  showSizeChanger
+                  size={useByChanges ? 'samll' : 'default'}
+                  simple={!!useByChanges}
+                  pageSizeOptions={['5', '10', '20', '30', '50', '100']}
+                  current={currentPage}
+                  total={rows?.length}
+                  pageSize={pageSize}
+                  //页码改变
+                  onChange={(currentPage, pageSize) => {
+                    setCurrentPage(currentPage);
+                    handleChangePageSize(currentPage, pageSize);
+                  }}
+                  //分页大小改变
+                  onShowSizeChange={(currentPage, pageSize) => {
+                    setPageSize(pageSize);
+                    setCurrentPage(1);
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        </Spin>
+      </div>
+      <ImportForm
+        ref={uploadRef}
+        onSubmit={handleImportSubmit}
+        isType={isType}
+        headers={headers}
+        {...props}
+      />
+
+      {version === 'v2' && !isBusinessPanel && (
+        <div style={{ display: 'none' }}>
+          <DosmDpCom
+            module='./DataTableRecordSelect'
+            placeholder={langUtil.t(
+              intl.get('ea5b8187-ccee-471b-a71d-fad924302c89').d('请选择')
+            )}
+            referenceTable={dataTableName}
+            value={{
+              value: dataTabelValue(),
+              referenceTable: dataTableName,
+            }}
+            jumpDetail={false}
+            style={{ width: '100%', flex: '1 1 0%' }}
+            onChange={handleDataChange}
+            defaultViewId={listViewId}
+            formViewId={formViewId}
+            isModuleFederation={true}
+            onInit={(setVisible, setSelectedKeys, handleClick4Detail) => {
+              selectDataTableRef.current.setVisible = setVisible;
+              selectDataTableRef.current.setSelectedKeys = setSelectedKeys;
+              selectDataTableRef.current.handleClick4Detail =
+                handleClick4Detail;
+            }}
+          />
+        </div>
+      )}
+
+      <Drawer
+        width={680}
+        visible={drawerVisible}
+        onClose={() => setDrawerVisible(false)}
+        title={
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '6px 0',
+            }}
+          >
+            <div>{title}</div>
+            {value && (
+              <div
+                style={{
+                  position: 'absolute',
+                  right: 30,
+                  fontSize: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <a
+                  onClick={() => {
+                    selectDataTableRef.current.handleClick4Detail(
+                      formViewId,
+                      currentViewData?.[referenceDependentField]
+                    );
+                  }}
+                >
+                  {langUtil.t(
+                    intl
+                      .get('657e6d2e-4ecd-4934-84f3-ce690985bb4c')
+                      .d('打开记录')
+                  )}
+                </a>
+              </div>
+            )}
+          </div>
+        }
+      >
+        <div className={styles['record-detail']}>
+          <DosmDpCom
+            module='./FormViewDetail'
+            match={{
+              params: {
+                viewId: formViewId,
+                dataId: currentViewData?.[referenceDependentField] || '',
+              },
+            }}
+            location={window.location}
+            history={{}}
+            route={{}}
+            setDetailTitle={setTitle}
+            range={'pc'}
+            isView={true}
+            isModuleFederation={true}
+            onCancel={() => setDrawerVisible(false)}
+          />
+        </div>
+      </Drawer>
+      <Drawer
+        maskClosable={false}
+        width={680}
+        visible={tableRowEditVisible}
+        onClose={() => setTableRowEditVisible(false)}
+        title={renderRowFormTitle()}
+        destroyOnClose
+      >
+        <RowForm
+          tableKey={fieldCode}
+          columns={columns}
+          row={currentRow}
+          t={t}
+          setVisible={setTableRowEditVisible}
+          useByChanges={useByChanges}
+          copyRow={copyRow}
+          onRowChange={onRowChange}
+          onAddRow={onAddRow}
+        />
+      </Drawer>
+    </>
+  );
 };
 
-/**
- * 处理表格数据结构
- * @param {*} originValue 源数据
- * @returns
- */
-export const getTableData = (originValue, columns) => {
-  const autoNumberCols = columns?.filter(col => col['x-component'] === 'AUTO_NUMBER')?.map(col => col.key);
-  if (!Array.isArray(originValue)) {
-    return [];
-  }
-  let val = [];
+export default ITableForm;
 
-  originValue?.forEach(v => {
-    if (v.rowData) {
-      v.rowData[$rowKey] = v.rowData[$rowKey] || v.id || helper.guid()
-    }
-  })
-
-  originValue
-    ?.sort((a, b) => (a?.rowNum || 0) - (b?.rowNum || 0))
-    ?.forEach((v) => {
-      if (v.rowIsDel === false && v.rowData) {
-        v.rowData[$deleteable] = false
-      }
-      val = [...val, v?.rowData];
-    });
-  val = val.map(v => ({
-    ...v,
-    [$rowKey]: v[$rowKey] || helper.guid()
-  }))
-  const array1 = [], array2 = [];
-  val?.forEach(v => {
-    if (v[$deleteable] === false) {
-      array1.push({ ...v })
-    } else {
-      array2.push({ ...v })
-    }
-  })
-  const newArray = [...array1, ...array2];
-  if (autoNumberCols?.length > 0) {
-    val.forEach((v, index) => {
-      autoNumberCols.forEach(k => {
-        newArray[index][k] = v[k]
-      })
-    })
-  }
-  return newArray;
+const UPLOAD_STATUS = {
+  INIT: 0,
+  UPLOADING: 1,
+  DONE: 2,
+  ERROR: 3,
 };
 
-/**
- * 给单元格设置初始值
- * @param {*} rowData 行数据
- * @param {*} cols 列数据
- * @returns
- */
-// getUserListByIdsForMember接口返回的data数组
-const parseUserInfo = (data) => {
-  if (!data?.[0]) return null;
-  let source = helper.deepClone(data[0]);
-  const extend = source?.extend || [];
-  if (extend?.length) {
-    let obj = {};
-    extend?.forEach((item) => {
-      if (item.alias) {
-        obj[item.alias] = item.valueForMember || item.value;
-      }
-    });
-    source = {
-      ...source,
-      ...obj,
-    };
-  }
-  return source;
-};
-export const setDefaultToCell = async (
-  rowData,
-  cols,
-  { workOrderId, formModelId, value },
-  row
-) => {
-  const curUser = permission.getUserInfo();
-  let _rowData = { ...rowData };
-  const needAddUserInfo = []; //记录需要添加成员信息的成员的id
-  const autoNumberList = []; // 需要保留是自动编号的列数据
-  (cols || [])?.forEach((c) => {
-    const currentUserSuperiors =
-      JSON.parse(localStorage.getItem('current_user_superiors')) || [];
-    let superiors = JSON.parse(localStorage.getItem('superiors')) || {};
-    const _leaderuserName =
-      (superiors?.name || '') + '(' + (superiors?.userAlias || '') + ')';
-    const defaultUserleader = [
-      { userId: superiors?.id, userName: _leaderuserName },
-    ];
+const ImportForm = forwardRef(
+  ({ onSubmit, isType, headers, ...props }, ref) => {
+    const { fieldCode, fieldName, value, t, useByChanges } = props;
+    const { orderInfo = {} } = t || {};
+    const {
+      nodeId,
+      processDefId,
+      mdlDefCode,
+      workOrderId,
+      formId,
+      formModelId,
+    } = orderInfo || {};
 
-    const isCurrentUser =
-      c?.['x-component'] == EnumType?.member &&
-      c?.['x-props']?.defaultValue === true; // 判断是否是成员组件且默认当前用户
-    const _userName =
-      (curUser?.name || '') + '(' + (curUser?.userAlias || '') + ')';
-    const defaultUser = [{ userId: curUser?.userId, userName: _userName }];
-    const needSetCurrentUser = (obj) =>
-      obj?.['x-component'] == EnumType.member &&
-      obj?.['x-props']?.defaultValue === true &&
-      obj?.['x-props']?.defaultValueJson == null;
-    const newNeedSetCurrentUser = (obj) =>
-      obj?.['x-component'] == EnumType.member &&
-      obj?.['x-props']?.defaultValueJson != null;
-    let _initDefaultValue = c?.default;
-    if (needSetCurrentUser(c)) {
-      //旧的默认值
-      _initDefaultValue = defaultUser;
-    }
-    if (newNeedSetCurrentUser(c)) {
-      //新的默认值
-      let dtype = c['x-props'].defaultValueJson;
-      switch (dtype?.type) {
-        case defaultEnum.none:
-          //无默认值
-          _initDefaultValue = [];
-          break;
-        case defaultEnum.currentUser:
-          //当前用户，
-          _initDefaultValue = defaultUser;
-          break;
-        case defaultEnum.currentUserLeader: {
-          if (c['x-props'].isMultiple) {
-            _initDefaultValue = currentUserSuperiors?.map((u) => ({
-              userId: u.id,
-              userName: (u?.name || '') + '(' + (u?.userAlias || '') + ')',
-            }));
-          } else {
-            //当前用户上级
-            if (defaultUserleader[0]?.userId) {
-              _initDefaultValue = defaultUserleader;
-            } else {
-              _initDefaultValue = [];
-            }
-          }
-          break;
-        }
-        case defaultEnum.custom:
-          //自定义
-          _initDefaultValue = dtype.value;
-          break;
-        case defaultEnum.currentFieldLeader: {
-          if (c['x-props'].isMultiple) {
-            _initDefaultValue = dtype.value;
-          } else {
-            if (dtype.value?.[0]?.['userId']) {
-              _initDefaultValue = dtype.value?.[0] ? [dtype.value?.[0]] : [];
-            } else {
-              _initDefaultValue = [];
-            }
-          }
-          break;
-        }
-        default:
-          _initDefaultValue = [];
-          break;
-      }
-    }
-    _rowData[c?.key] = _initDefaultValue;
-    if (
-      (_initDefaultValue == true ||
-        (_initDefaultValue?.length && _initDefaultValue?.[0]?.['userId'])) &&
-      c?.['x-props']?.['memberMes']?.['selected']?.length
-    ) {
-      needAddUserInfo?.push({ id: c.id, user: _initDefaultValue });
-    }
-    // 保留自增编号
-    if (c?.['x-component'] === EnumType.autoNumber) {
-      autoNumberList.push({
-        code: c?.key,
-        autoNumberInfo: { ...c?.['x-props']?.autoNumberRule },
-        renumbering: c?.['x-props']?.renumbering,
-      });
-    }
-    if (c?.['x-component'] === EnumType.date) {
-      const dataDefault = c?.['x-props']?.['dataDefault'];
-      if (dataDefault?.key == EnumDateInitValue.todayBefore) {
-        _rowData[c?.key] = moment()
-          .subtract(dataDefault?.days, 'days')
-          .valueOf();
-      }
-      if (dataDefault?.key == EnumDateInitValue.todayAfter) {
-        _rowData[c?.key] = moment().add(dataDefault?.days, 'days').valueOf();
-      }
-      if (dataDefault?.key === EnumDateInitValue.today) {
-        _rowData[c?.key] = moment().valueOf();
-      }
-      if (dataDefault?.key === EnumDateInitValue.defined) {
-        _rowData[c?.key] = moment(Number(dataDefault?.defined))?.valueOf();
-      }
-    }
-  });
+    const [visible, setVisible] = useState(false);
+    const [confirmLoading, setConfirmLoading] = useState(false);
+    const [status, setStatus] = useState(UPLOAD_STATUS.INIT); // 上传状态
+    const [errorInfo, setErrorFileInfo] = useState({}); //异常文件
+    const [percent, setPercent] = useState(0);
+    const [file, setFile] = useState(null);
+    const [dataList, setDataList] = useState([]); // 导入成功之后返回一个数据集
 
-  // ———————————————同步成员信息——————————————————————
-  const setExtendUserInfo = (key, userId) => {
-    const fields = cols.filter(co => co.userParentId === key);
-    if (!fields.length) return Promise.resolve()
-    return Promise.all([getUserListByIdsForMember(userId), getUserSuperiorsByParam(userId)]).then(res => {
-      const [baseRes, superiorRes] = res
-      const info = { ...baseRes.data?.[0] || {} }
-      baseRes.data?.[0].extend?.forEach(ex => {
-        info[ex.alias || ex.name] = ex.valueForMember || ex.value
-      })
-      if (superiorRes.data && superiorRes.data.length) {
-        info[userInfoKind.associatedCi] = [{ userId: superiorRes.data[0].id, userName: superiorRes.data[0].userAlias || superiorRes.data[0].name }]
-        info[userInfoKind.associatedCiMulti] = superiorRes.data.map(u => ({ userId: u.id, userName: u.userAlias || u.name }))
-      }
-      fields.forEach(field => {
-        _rowData[field.key] = info[field.kind]
-      })
-    })
-  }
-  // 同步成员信息
-  for (let i = 0; i < cols.length; i++) {
-    const col = cols[i];
-    if (col['x-component'] !== 'MEMBER') continue;
-    const value = _rowData[col.key]
-    if (!value || !value.length || isNil(value[0].userId)) continue;
-    if (col['x-props']?.memberMes?.isSync && col['x-props']?.memberMes?.selected?.length) {
-      await setExtendUserInfo(col.key, value[0].userId)
-    }
-  }
-  // ———————————————同步成员信息——————————————————————
+    // 当前展示的headers
+    const showFieldItems = (headers || []).filter(
+      (column) =>
+        !column?.hide?.length ||
+        column?.hide?.indexOf(-1) < 0 ||
+        column?.show?.indexOf(-1) > -1 ||
+        column?.show?.length > 0 ||
+        useByChanges
+    );
+    // 当前隐藏的headers
+    const hiddenFieldItems = (headers || []).filter(
+      (column) => !showFieldItems.find((e) => e.id === column.id)
+    );
+    // 当前只读的headers
+    const onlyReadFieldItems = (headers || []).filter(
+      (column) =>
+        column?.disabled?.indexOf(-1) > -1 || column?.disabled?.length > 0
+    );
 
-  if (autoNumberList?.length) {
-    let len = value?.length || 0;
-    let lastRowValue = len ? value[len - 1]?.rowData : {};
-    let autoNumberLastRowValue = {};
-    autoNumberList.forEach((item) => {
-      autoNumberLastRowValue[item?.code] = lastRowValue[item?.code];
-    });
-    let params = {
-      workOrderId,
-      // mdlFormTemplateId: formModelId,
-      autoNumberList,
-      autoNumberLastRowValue,
-    };
-    let result = await addTableAutoNumber(params);
-    let data = result?.data || {};
-    for (let key in data) {
-      _rowData[key] = data[key];
-    }
-  }
-  //复制行数据,保留自动编号自增,不被复制
-  if (row) {
-    for (let key in row) {
-      const col = cols?.find((c) => c.key === key);
-      if (col && col['x-component'] !== 'AUTO_NUMBER') {
-        _rowData[key] = row[key];
-      }
-    }
-  }
+    useImperativeHandle(
+      ref,
+      () => ({
+        show: () => setVisible(true),
+        hide: () => setVisible(false),
+        export: (e, cb) => downloadTemplate(e, cb, true),
+      }),
+      [value, showFieldItems]
+    );
 
-  return _rowData;
-};
+    const submit = () => {
+      setConfirmLoading(true);
+      onSubmit(dataList)
+        .then(() => {
+          setVisible(false);
+          reset();
+        })
+        .catch((err) => {
+          console.error(err);
+          setConfirmLoading(false);
+        });
+    };
 
-/**
- * 字段校验
- * @param {*} col 列数据
- * @param {*} value 字段值
- * @param {*} rowNum 行号
- * @param {*} data 表格所有值
- * @param {*} needCheckRequired 要校验必填：点击提交/更新按钮 或者 曾经编辑过该单元格
- */
-const registerValidationRules = (
-  col,
-  value,
-  rowNum,
-  data,
-  needCheckRequired,
-  excludeCheckRow = []
-) => {
-  const xRules = col?.['x-rules'];
-  const fieldCode = col?.key;
-  const isRequired = col?.required;
-  const isDisabled =
-    col?.disabled?.indexOf(rowNum) > -1 || col?.disabled?.indexOf(-1) > -1; // -1代表表头，此单元格只读或者整列只读，则不校验必填
-  const isShow =
-    col?.show?.indexOf(rowNum) > -1 ||
-    (col?.hide?.indexOf(rowNum) || -1) === -1; // 此单元格展示，则要校验
-  // console.log(col,col?.key,isRequired,isDisabled,isShow,'💢',needCheckRequired);
-  if ((xRules && xRules?.length == 0 && !isRequired) || isShow === false) {
-    return '';
-  } else {
-    const enumRules = Object.values(EnumValidationRulesValue); // 校验类型
-    const validators = getValidateRules(); // 所有校验器
-    let rules = [];
-    xRules &&
-      xRules?.map((r) => {
-        let rule = {
-          key: Object.keys(r)?.find((v) => enumRules?.indexOf(v) != -1),
-          rule: r?.valueUniqueFlag
-            ? { ...r, colValues: getColValues(fieldCode, data), rowNum }
-            : { ...r },
-        };
-        rules = [...rules, rule];
-      });
-    if (needCheckRequired && isRequired)
-      rules = [...rules, { key: 'required', rule: { required: true } }]; // 只读时也要校验必填
-    // console.log(rules,'🎂🎂');
-    let error = '';
-    rules?.forEach((rule) => {
-      if (!error) error = validators[rule?.key]?.(value, rule?.rule);
-      // 必填时校验=>表格配置了成员字段。处理设置中的指派范围设置为多人处理。跟随功能字段-成员字段
-      // 核心：不属于当前成员的行必填不校验
-      if (rule?.key == 'required' && excludeCheckRow?.includes(rowNum + '')) {
-        error = '';
-      }
-    });
-    return error;
-  }
-};
+    // flag=true 导出数据
+    // 因为后端把下载模版和导出数据用了同一个接口，所以这么写
+    const downloadTemplate = (e, cb, flag = false) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const importFieldCode = showFieldItems.map((e) => e.id);
+      const params = {
+        workOrderId,
+        mdlFormId: formId,
+        nodeId,
+        isImport: flag,
+        hasData: flag,
+        tableCode: fieldCode,
+        processDefId: processDefId || mdlDefCode,
+        currentData: value || [],
+        enableType: isType ? isType : 'other',
+        importFieldCode:
+          importFieldCode.length > 0 ? importFieldCode : undefined,
+      };
+      downLoadTableTemplate(params)
+        .then((res) => {
+          if (res.type === 'application/json') {
+            const reader = new FileReader();
+            reader.readAsText(res, 'utf-8');
+            reader.onload = () => {
+              res = JSON.parse(reader.result);
+              message.error(
+                res.msg ||
+                langUtil.t(
+                  intl
+                    .get('8b214c62-817f-433e-84cd-2636e2fe5633')
+                    .d('请求出错了~')
+                )
+              );
+            };
+            return;
+          }
+          downloadFile(
+            res,
+            flag
+              ? `${fieldName ||
+              intl.get('0af5ba0e-f890-4479-8125-904f29c3fa36').d('表格')
+              }-${moment().format('YYYY-MM-DD')}.xlsx`
+              : intl
+                .get('30f76319-df6e-4b03-8a64-e8e67446dd3e')
+                .d('{slot0}导入模版.xlsx')
+                .split('{slot0}')
+                .join(
+                  intl.get('0af5ba0e-f890-4479-8125-904f29c3fa36').d('表格')
+                )
+          );
+        })
+        .catch((err) => {
+          message.error(
+            (err && err.msg) ||
+            langUtil.t(
+              intl
+                .get('8b214c62-817f-433e-84cd-2636e2fe5633')
+                .d('请求出错了~')
+            )
+          );
+        })
+        .finally((_) => {
+          cb && cb();
+        });
+    };
 
-/**
- * 获取列的所有值
- * @param {*} key 列code
- * @param {*} data 表格所有值
- */
-const getColValues = (key, data) => {
-  let list = [];
-  data?.map((v, idx) => {
-    list[idx] = v?.[key];
-  });
-  return list;
-};
+    const beforeUpload = (file) => {
+      const isExcel = ['xls', 'xlsx']?.includes(
+        file.name
+          .substring(file.name.lastIndexOf('.') + 1, file.name?.length)
+          .toLowerCase()
+      );
+      if (!isExcel) {
+        message.warning(
+          intl.get('cdbf9696-bc83-4f48-8353-f0ec1bca3cbf').d('仅支持excel文件')
+        );
+      }
+      const isLt100M = file.size / 1024 / 1024 < 100;
+      if (!isLt100M) {
+        message.warning(
+          intl
+            .get('efa1be9f-0f2d-496e-98ba-4625ba7c67bf')
+            .d('上传文件内存上限为100MB')
+        );
+        return;
+      }
+      setFile(file);
+      return isExcel && isLt100M;
+    };
+
+    const customRequest = ({ file }) => {
+      setStatus(UPLOAD_STATUS.UPLOADING);
+      setDataList([]);
+      let autoNumberList = [];
+      let autoNumberLastRowValue = {};
+      let len = value?.length || 0;
+      let lastRowValue = value?.[len - 1]?.rowData || {};
+      headers?.forEach((c) => {
+        if (c?.['x-component'] === EnumType.autoNumber) {
+          autoNumberList.push({
+            code: c?.key,
+            autoNumberInfo: { ...c?.['x-props']?.autoNumberRule },
+            renumbering: c?.['x-props']?.renumbering,
+          });
+        }
+      });
+
+      autoNumberList.forEach((item) => {
+        autoNumberLastRowValue[item?.code] = lastRowValue[item?.code];
+      });
+      const importFieldCode = (headers || [])
+        .filter(
+          (column) =>
+            !column?.hide?.length ||
+            column?.hide?.indexOf(-1) < 0 ||
+            column?.show?.indexOf(-1) > -1 ||
+            column?.show?.length > 0 ||
+            useByChanges
+        )
+        .map((e) => e.id);
+      const params = {
+        file,
+        importTableInfoVo: new Blob(
+          [
+            JSON.stringify({
+              workOrderId,
+              tableCode: fieldCode,
+              nodeId,
+              mdlFormId: formId,
+              processDefId: processDefId || mdlDefCode,
+              isImport: true,
+              currentData: value || [],
+              enableType: isType ? isType : 'other',
+              mdlFormTemplateId: formModelId,
+              autoNumberList,
+              autoNumberLastRowValue,
+              importFieldCode:
+                importFieldCode.length > 0 ? importFieldCode : undefined,
+
+              // 隐藏的 code
+              hiddenFieldCode: hiddenFieldItems.map((e) => e.id),
+              // 只读的 code
+              onlyReadFieldCode: onlyReadFieldItems.map((e) => e.id),
+              // importFieldCode: importFieldCode.length > 0 ? importFieldCode : undefined,
+            }),
+          ],
+
+          { type: 'application/json' }
+        ),
+      };
+
+      importTableData(params, {
+        onUploadProgress: (progressEvent) => {
+          let percent =
+            ((progressEvent.loaded / progressEvent.total) * 100) | 0;
+          setPercent(percent);
+        },
+      })
+        .then((res) => {
+          if (!res || !res.data) {
+            throw new Error('response data is empty');
+          }
+          setStatus(UPLOAD_STATUS.DONE);
+          setVisible(true);
+          if (res.data.errorExcelUrl) {
+            setStatus(UPLOAD_STATUS.ERROR);
+            setErrorFileInfo(res.data || {});
+            if (res.data.importData && res.data.rightCount) {
+              // 接口返回的数据有问题，rowNum是从1开始编号的
+              (res.data.importData || [])?.forEach((row) => {
+                row.rowNum = row.rowNum - 1;
+              });
+              setDataList(res.data.importData || []);
+            }
+          } else {
+            setStatus(UPLOAD_STATUS.DONE);
+            // 接口返回的数据有问题，rowNum是从1开始编号的
+            (res.data.importData || [])?.forEach((row) => {
+              row.rowNum = row.rowNum - 1;
+            });
+            setDataList(res.data.importData || []);
+            message.success(
+              langUtil.t(
+                intl.get('b09d82e8-9e1c-4ac2-b8b8-efa1b69a8bde').d('导入成功')
+              )
+            );
+          }
+        })
+        .catch((err) => {
+          console.error(err);
+          setStatus(UPLOAD_STATUS.INIT);
+          message.error(
+            (err && err.msg) ||
+            intl.get('d50da4dd-90d0-4bd5-81c2-88584d0b6a55').d('上传出错了~')
+          );
+        })
+        .finally((_) => {
+          setPercent(0);
+        });
+    };
+
+    const reset = () => {
+      setStatus(UPLOAD_STATUS.INIT);
+      setPercent(0);
+      setConfirmLoading(false);
+      setErrorFileInfo({});
+      setFile(null);
+      setDataList([]);
+    };
+
+    // 下载错误报告
+    const downLoadErrorReport = (e) => {
+      e.stopPropagation();
+      const fileName = `${langUtil.t(
+        intl.get('219951e8-1ff6-4ec6-850a-9910191beed5').d('异常报告')
+      ) + moment().format('MMDDHHMMSS')
+        }.xlsx`;
+      downLoad({ id: errorInfo.errorExcelUrl }).then((url) => {
+        downloadFileByUrl(url, fileName);
+      });
+    };
+
+    const downLoadCurrFile = () => {
+      downloadFile(file, file?.name);
+    };
+
+    const onCancel = () => {
+      setVisible(false);
+      reset();
+    };
+
+    const modalProps = {
+      title: `${langUtil.t(
+        intl.get('e7e28773-1133-41f7-9e97-01bed6dae4ae').d('导入')
+      )}`,
+      width: 620,
+      onCancel: () => {
+        setVisible(false);
+      },
+      footer: [
+        <Button key='back' onClick={onCancel}>
+          {intl.get('19d6c313-9540-4042-b642-ebc6396ca0c7').d('取消')}
+        </Button>,
+        <Button
+          key='submit'
+          disabled={dataList?.length === 0}
+          type='primary'
+          loading={confirmLoading}
+          onClick={submit}
+        >
+          {intl.get('4253417c-d699-4eed-8c75-34d2a8b18a68').d('确定')}
+        </Button>,
+      ],
+
+      visible,
+    };
+
+    const uploadProps = {
+      showUploadList: false,
+      accept: '.xls,.xlsx',
+      beforeUpload,
+      customRequest,
+      style: { display: status === UPLOAD_STATUS.INIT ? 'block' : 'none' },
+    };
+
+    return (
+      <Modal {...modalProps}>
+        <div className='upload-form-container'>
+          {
+            <Dragger {...uploadProps}>
+              <p className='ant-upload-drag-icon'>
+                <Icon type='cloud-upload' />
+              </p>
+              <p className='ant-upload-text'>
+                {langUtil.t(
+                  intl
+                    .get('794bd935-550f-468e-ae33-f739580d4bec')
+                    .d(
+                      '将文件拖到此处/点击导入，仅支持Excel文件，大小不超过100M'
+                    )
+                )}
+                ，
+                <a onClick={downloadTemplate}>
+                  {langUtil.t(
+                    intl
+                      .get('32d6e9b2-3364-4933-9d6b-156c163b4753')
+                      .d('下载模版')
+                  )}
+                </a>
+              </p>
+            </Dragger>
+          }
+
+          {status === UPLOAD_STATUS.UPLOADING && (
+            <div className='upload-result-wrapper'>
+              <p>
+                <Icon
+                  type='link'
+                  style={{ marginRight: '4px', verticalAlign: 'middle' }}
+                />
+
+                {file?.name}
+              </p>
+              <Progress percent={percent} status='active' />
+            </div>
+          )}
+
+          {status === UPLOAD_STATUS.DONE && (
+            <div className='upload-result-wrapper center'>
+              <p>
+                <Icon
+                  type='link'
+                  style={{ marginRight: '4px', verticalAlign: 'middle' }}
+                />
+
+                {file?.name}
+              </p>
+              <div>
+                <Upload {...uploadProps}>
+                  <Button type='link' className='dark'>
+                    {langUtil.t(
+                      intl
+                        .get('24225a2b-d836-4d2b-b6b4-aa70d8bfd2d8')
+                        .d('重新导入')
+                    )}
+                  </Button>
+                </Upload>
+                <Button type='link' className='dark' onClick={reset}>
+                  {intl.get('55aff22d-5b53-4b3f-87ec-76ab3c4654ce').d('删除')}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {status === UPLOAD_STATUS.ERROR && (
+            <div className='upload-result-wrapper center'>
+              <p
+                onClick={downLoadCurrFile}
+                style={{ color: theme.color_red, cursor: 'pointer' }}
+              >
+                <Icon
+                  type='link'
+                  style={{ marginRight: '4px', verticalAlign: 'middle' }}
+                />
+
+                {file && file.name}
+              </p>
+              <p>
+                {errorInfo.rightCount}
+                {langUtil.t(
+                  intl.get('b09d82e8-9e1c-4ac2-b8b8-efa1b69a8bde').d('导入成功')
+                )}
+                ，<font color={theme.color_red}>{errorInfo.errorCount}</font>
+                {intl
+                  .get('07d1ee40-8304-4c68-b7dd-f3c83843d85f')
+                  .d('条失败，可下载错误报告或重新导入')}
+              </p>
+              <div>
+                <Upload {...uploadProps}>
+                  <Button type='link' className='dark'>
+                    {langUtil.t(
+                      intl
+                        .get('24225a2b-d836-4d2b-b6b4-aa70d8bfd2d8')
+                        .d('重新导入')
+                    )}
+                  </Button>
+                </Upload>
+                <Button type='link' className='dark' onClick={reset}>
+                  {intl.get('55aff22d-5b53-4b3f-87ec-76ab3c4654ce').d('删除')}
+                </Button>
+                <Button type='link' onClick={downLoadErrorReport}>
+                  {langUtil.t(
+                    intl
+                      .get('9b5e17b3-821e-45c5-9886-ed9d0f782960')
+                      .d('下载错误报告')
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+        <style jsx>{`
+          .upload-form-container {
+            font-size: 16px;
+            height: 156px;
+            :global(.ant-upload.ant-upload-drag) {
+              background: ${theme.background_color_33};
+              font-size: 16px;
+            }
+            :global(.ant-upload.ant-upload-drag p.ant-upload-text) {
+              font-size: 16px;
+              color: ${theme.color_238};
+              margin: 0;
+            }
+            .upload-result-wrapper {
+              height: 100%;
+              display: flex;
+              justify-content: center;
+              flex-direction: column;
+              border: 1px dashed ${theme.border_107};
+              border-radius: 4px;
+              padding: 0 24px;
+              &.center {
+                align-items: center;
+              }
+              :global(.ant-btn-link) {
+                margin-right: 8px;
+              }
+              :global(.ant-btn-link.dark) {
+                color: ${theme.color_239};
+              }
+            }
+          }
+        `}</style>
+      </Modal>
+    );
+  }
+);
+
+
+
+// 拖拽手柄
+const DragHandler = SortableHandle(({ disabled }) => (
+  <div className={cls(styles['dynamic-table-col'], { [styles['drag-handler']]: disabled != true, [styles['drag-handler-disabled']]: disabled == true })}>
+    <DragIcon />
+  </div>
+));
+
+const SortableItem = SortableElement(({ children }) => children);
+
+const SortableList = SortableContainer(({ children, ...props }) => {
+  return (
+    <div
+      {...props}
+      className={styles['dynamic-table-tbody']}
+    >
+      {children}
+    </div>
+  );
+});
+
