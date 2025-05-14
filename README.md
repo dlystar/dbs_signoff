@@ -1,41 +1,82 @@
-.dynamic-date {
+.dynamic-number {
+    display: flex;
+    align-items: center;
     width: 100%;
-    min-height: 20px;
 
-    :global(.ant-picker) {
+    .readonly-number {
         width: 100%;
-    }
-
-    .readonly-date {
-        width: 100%;
-        display: inline-block;
-        line-height: 29px;
-        white-space: normal;
-        word-break: break-all;
-        padding-right: 8px;
-    }
-
-    :global(.ant-calendar-picker) {
-        min-width: 100% !important;
-        width: 100% !important;
-    }
-
-    :global(.ant-input.ant-input-disabled) {
-        cursor: default;
-        background-color: @background_color_33;
-    }
-
-    :global(.ant-input-disabled + .ant-calendar-picker-icon) {
-        cursor: default;
     }
 }
 
-:global {
-    .ant-picker-time-panel-column>li.ant-picker-time-panel-cell-disabled .ant-picker-time-panel-cell-inner {
-        color: rgba(0, 0, 0, 0.25) !important;
+.number-input-wrapper {
+    display: flex !important;
+    align-items: center;
+    width: 100%;
+    position: relative;
+    padding-right: 0;
+
+    :global {
+        .ant-input {
+            border: none !important;
+            padding: 0;
+            margin: 0;
+            height: 28px;
+            line-height: 28px;
+            border-radius: 0;
+
+            &:active {
+                outline: none;
+            }
+
+            &:focus {
+                box-shadow: none !important;
+                outline: none !important;
+            }
+        }
+    }
+}
+
+.number-btn-group {
+    display: flex;
+    align-items: center;
+    flex-direction: row;
+    border-left: 1px solid rgba(0, 0, 0, 0.15);
+    font-size: 12px;
+    position: relative;
+    color: rgba(0, 0, 0, .45);
+
+    &::after {
+        background-color: rgba(0, 0, 0, .15);
+        content: "";
+        display: block;
+        height: 16px;
+        left: 50%;
+        position: absolute;
+        width: 1px;
+    }
+}
+
+.number-btn {
+    width: 36px;
+    text-align: center;
+    height: 28px;
+    cursor: pointer;
+    outline: none;
+    transition: background 0.2s;
+    border-radius: 0;
+    line-height: 28px;
+
+    &:disabled {
+        color: #ccc;
+        cursor: not-allowed;
+        background: #f5f5f5;
     }
 
-    .ant-picker-header-view {
-        white-space: nowrap;
+    &:active {
+        background: #e6f7ff;
+    }
+
+    &:hover {
+        color: @primary-color;
     }
 }
