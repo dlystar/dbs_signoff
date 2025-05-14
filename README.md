@@ -1,348 +1,251 @@
+.dosm-basic-layout{
+  .extra{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    // width: 201px;
+    height: 100%;
+    // padding: 0 10px;
+  }
+  .dosm-custom-content{
+    background-color: transparent !important;
+  }
+  :global{
+    //.cw-content-wrapper{
+    //  padding-top: 0 !important;
+    //}
+    // .@{table-prefix-cls}-scroll{
+    //   // 修复新版本谷歌浏览器表格头部展示异常问题
+    //   .@{table-prefix-cls}-header:not(.@{table-prefix-cls}-hide-scrollbar){
+    //       overflow-y: hidden;
+    //   }
+    // }
+  }
+  /* 设置滚动条的样式 */
+  :global(.cw-menu-box::-webkit-scrollbar) {
+    width: 8px;
+  }
 
-import { EnumSatisfyTypeValue } from '@/pages/BusinessSetting/ProcessManagement/CreateNew/AdvancedSetting/constants/dynamicForm';
-import { EnumType } from '@/constants/common/formType';
-import { isNil, isEmpty, merge } from 'lodash-es'
-import { getTableLinkage, handleValue } from './utils'
-import { helper } from '@/utils/T';
-import { eventManager } from '@/utils/T/core/helper';
-// options.isIgnoreRequired
-// options.disabled
-export const linkageAction = ({ linkage, linkageData = [], formData, permissionMap = {}, options }) => {
-    if (!linkageData || !linkageData.length) return {};
-    // 把字段1的值赋予字段2，也就是给字段2设置值
-    linkageData.forEach((item, index) => {
-        if (!item.tableCode && item.copyValueSetOtherField && !isNil(formData?.[item.key])) {
-            item.copyValueSetOtherFieldList?.forEach(_item => {
-                const { fieldCode, type } = _item;
-                const tempIdx = linkageData.findIndex(na => na.fieldCode === fieldCode);
-                let value = [formData[item.key] || '']
-                if ([EnumType.group, EnumType.member, EnumType.selectMany, EnumType.checkbox].includes(type)) {
-                    value = [...formData[item.key] || []]
-                }
-                if (tempIdx > -1) {
-                    const temp = linkageData[tempIdx]
-                    if (temp.needSetValue !== true || tempIdx < index) {
-                        Object.assign(temp, {
-                            needSetValue: true,
-                            value
-                        })
-                    }
-                } else {
-                    linkageData.push({
-                        key: fieldCode,
-                        fieldCode: fieldCode,
-                        type: type,
-                        needSetValue: true,
-                        value
-                    })
-                }
-            })
-        }
-    })
-    const fieldStateMap = {}, linkTable = {}
-    linkageData.forEach(v => {
-        if (v.tableCode && v.tableColumnCode) {
-            transferLinkageState4Table(linkTable, v, permissionMap, options)
-        } else {
-            // 这里是配置项标签页字段下面的标签显示/隐藏的，比较特殊，原来就这么写的，先别动
-            if (v.type == EnumType.dpConfigTab && !isNil(v.hidden)) {
-                if (v.hidden) {
-                    linkage && linkage.cmdbTabHideList(v.key, linkageData.filter(item => item.hidden === true).map((item) => item.key));
-                } else {
-                    linkage && linkage.cmdbTabShowList(v.key, linkageData.filter(item => item.hidden === false).map((item) => item.key))
-                }
-            }
-            if (v.key) {
-                const { state, componentState } = transferLinkageState(v, permissionMap, options)
-                if (!isEmpty(state) || !isEmpty(componentState)) {
-                    fieldStateMap[v.key] = {
-                        state: merge(fieldStateMap[v.key]?.state || {}, state),
-                        componentState: merge(fieldStateMap[v.key]?.componentState || {}, componentState || {})
-                    }
-                }
-            }
-            if (v.setPopUps) {
-                linkage && linkage.popupModal('', v.popUpsContent)
-            }
-        }
-    })
-    Object.keys(linkTable).forEach(k => {
-        if (!fieldStateMap[k]) {
-            fieldStateMap[k] = {}
-        }
-        if (!fieldStateMap[k].componentState) {
-            fieldStateMap[k].componentState = {}
-        }
-        fieldStateMap[k].componentState['linkTable'] = linkTable[k]
-    })
-    console.log('fieldStateMap', fieldStateMap)
-    eventManager.emit('on-fieldLinkContent-change', {loading: false})
-    if (!isEmpty(fieldStateMap)) {
-        linkage && linkage.batchSetFieldsState(fieldStateMap)
-    }
-    return {
-        fieldStateMap,
-        linkTable
-    }
+  /* 滚动槽 */
+  :global(.cw-menu-box::-webkit-scrollbar-track) {
+    border-radius: 10px;
+  }
+
+  /* 滚动条滑块 */
+  :global(.cw-menu-box::-webkit-scrollbar-thumb) {
+    border-radius: 10px;
+    background: @background_color_134;
+  }
+
+  /* :TODO:暂时去掉内容区域距离顶部边距,待与UIUE沟通后设计页面再修改 */
+  :global(.cw-layout-wrapper-content) {
+    padding-top: 0!important;
+    background-color: rgb(245, 247, 249);
+  }
 }
 
-const transferLinkageState = (fieldProps, permissionMap, options) => {
-    const state = {}, componentState = {};
-    if (!isNil(fieldProps.hidden)) {
-        state.display = !fieldProps.hidden
-        // spacil handel "ProjectCutoverSignoff" field, when set hidden, just set style display -- temporary, when syan code ready, will remove
-        const signoffKeys = ['TestingSignoff', 'ProjectCutoverSignoff', 'HeightenSignoff', 'ProjectCutoverIDRSignoff', 'OtherSignoff']
-        if(signoffKeys.includes(fieldProps.key)){
-            state.display = true
-            componentState.styleDisplay = fieldProps.hidden ? 'none' : 'block'
-        }
+.dosm-basic-layout-fixed{
+  :global{
+    .cw-content-wrapper{
+      //padding-top: 24px !important;
+      padding: 0 !important;
     }
-    if (!isNil(fieldProps.mustWrite)) {
-        state.required = fieldProps.mustWrite
-    }
-    if (!isNil(fieldProps.readOnly)) {
-        componentState.disabled = fieldProps.readOnly
-        // state.readOnly = fieldProps.readOnly
-        // state.editable = !fieldProps.readOnly
-    }
-    // 在有些场景下会强制忽略必填校验，如：模板
-    if (options?.isIgnoreRequired) {
-        state.required = false
-    }
-    // 所有字段只读
-    if (options?.disabled) {
-        state.disabled = true
-        state.readOnly = true
-        state.editable = false
-    }
-    // 处理权限，工单详情页会有字段权限控制字段可见&可编辑
-    // 可编辑字段是可见字段的子集
-    const { needShowFieldList, needEditableFieldList } = permissionMap || {};
-    if (needShowFieldList && needShowFieldList.length) {
-        if (!needShowFieldList.some(sh => sh.key === fieldProps.key)) {
-            // 可见权限字段中没有这个字段，那这个字段就不能看到
-            state.display = false
-        }
-        if (!needEditableFieldList.some(sh => sh.key === fieldProps.key)) {
-            // 可编辑权限字段中没有这个字段，那这个字段就不可编辑
-            state.disabled = true
-            state.readOnly = true
-            state.editable = false
-        }
-    }
-    // 清空字段值
-    if (fieldProps.clearFieldValue) {
-        state.value = null
-    }
-    // 设置字段值
-    if (fieldProps.needSetValue) {
-        if (fieldProps.type !== 'TABLE_FORM') {
-            state.value = handleValue(fieldProps.value, fieldProps.type)
-        }
-    }
-    // 显示选项
-    if (fieldProps.showOptions === true) {
-        componentState['filterObj'] = {
-            type: EnumSatisfyTypeValue.showOptions,
-            values: fieldProps.optionValue,
-        }
-    }
-    // 隐藏选项
-    if (fieldProps.showOptions === false) {
-        componentState['filterObj'] = {
-            type: EnumSatisfyTypeValue.hideOptions,
-            values: fieldProps.optionValue,
-        }
-    }
-    // 追加字段值
-    if (fieldProps.additionOption) {
-        componentState['additionOptions'] = fieldProps.additionOptionValue
-    }
-    // 改变选项——自定义字段联动
-    if (fieldProps.changeOptins) {
-        componentState['changeOptions'] = fieldProps.optionValue || []
-    }
-    // 给表格字段设置值——自定义字段联动
-    if (fieldProps.needSetTableValue) {
-        const { value } = fieldProps || {};
-        const _value = [];
-        if (value && value?.length) {
-            value.forEach((v) => {
-                const rowData = {};
-                Object.keys(v.columnDataMap || {})?.forEach((k) => {
-                    rowData[k] = v.columnDataMap[k]?.fieldValueObj?.value;
-                });
-                _value?.push({
-                    id: v.rowId,
-                    rowNum: v.rowNum,
-                    rowData,
-                    rowIsDel: v.rowIsDel
-                });
-            });
-        }
-        state.value = _value
-    }
-    if (fieldProps.changeUserRange) {
-        componentState['changeOptions'] = fieldProps.optionValue || []
-    }
-    if (fieldProps.changeUserGroupRange) {
-        componentState['changeOptions'] = fieldProps.optionValue || []
-    }
-    // needSetFieldHint
-    if (fieldProps.needSetNode) {
-        componentState['changedFieldHint'] = helper.tryParse(fieldProps.needSetNodeValue || '')
-    }
-    if (fieldProps.needDateRange) {
-        componentState['dateRange'] = fieldProps.dateRange
-    }
-    // setErrors
-    if (fieldProps.showPrompt === true) {
-        state.errors = fieldProps.promptContent || ''
-        // 这里把promptContent作为组件的属性传下去
-        // 表格组件内部也有个检验逻辑，会覆盖掉promptContent，
-        componentState.promptContent = fieldProps.promptContent || ''
-    }
-    // clearErrors
-    if (fieldProps.showPrompt === false) {
-        state.errors = []
-        componentState.promptContent = ''
-    }
-    return { state, componentState }
+  }
+   /* 设置滚动条的样式 */
+   :global(.cw-menu-box::-webkit-scrollbar) {
+     width: 8px;
+   }
+
+   /* 滚动槽 */
+   :global(.cw-menu-box::-webkit-scrollbar-track) {
+     border-radius: 10px;
+   }
+
+   /* 滚动条滑块 */
+   :global(.cw-menu-box::-webkit-scrollbar-thumb) {
+     border-radius: 10px;
+     background: @background_color_134;
+  }
+
 }
-const transferLinkageState4Table = (linkTable, fieldProps, permissionMap, options) => {
-    const tableLinkage = getTableLinkage()
-    const { tableCode, tableColumnCode, rowNum } = fieldProps
-    if (!isNil(fieldProps.hidden)) {
-        if (fieldProps.hidden) {
-            tableLinkage.hide(linkTable, tableCode, tableColumnCode, rowNum);
-        } else {
-            tableLinkage.show(linkTable, tableCode, tableColumnCode, rowNum);
-        }
+
+
+.layout-without-sider{
+  :global(.cw-content-layout){
+    min-width: auto !important;
+  }
+}
+
+.message{
+  display: inline-block;
+
+  :global(.cw-message-wrapper_){
+    margin-top:18px;
+    margin-right:24px;
+  }
+}
+
+:global(.@{ant-prefix}-picker-dropdown.@{ant-prefix}-slid-up-leave){
+  display: none;
+}
+:global(.ant-tabs-content) {
+  height: 100%;
+}
+// :global(.ant-tabs-nav-list > .ant-tabs-tab) {
+//   // margin: 0 32px 0 0;
+// }
+
+// :global(.ant-tabs-nav .ant-tabs-tab) {
+//   font-size: 14px;
+//   font-weight: 500;
+//   height: 32px !important;
+// }
+// :global(.ant-tabs-nav .ant-tabs-tab-active) {
+//   font-weight: 400 !important;
+//   // &::before {
+//     // background-color: @primary-color;
+//   // }
+// }
+// :global(.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn) {
+//   text-shadow: none;
+// }
+
+// :global(.ant-tabs-tab) {
+//   font-size: 14px;
+// }
+
+:global(.fs-16) {
+  * {
+    font-size: 18px;
+  }
+  :global(*) {
+    font-size: 18px;
+  }
+}
+:global(.fs-14) {
+  * {
+    font-size: 16px;
+  }
+  :global(*) {
+    font-size: 16px;
+  }
+}
+:global(.fs-12) {
+  * {
+    font-size: 14px;
+  }
+  :global(*) {
+    font-size: 14px;
+  }
+}
+
+:global(.ant-picker-input > input) {
+  font-size: inherit;
+}
+:global(.ant-modal-confirm-body-wrapper) {
+  overflow: hidden;
+  :global(.ant-modal-confirm-btns) {
+    max-width: 100%;
+    :global(.ant-btn) {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    if (!isNil(fieldProps.mustWrite)) {
-        if (fieldProps.mustWrite) {
-            tableLinkage.required(linkTable, tableCode, tableColumnCode, rowNum);
-        } else {
-            tableLinkage.notRequired(linkTable, tableCode, tableColumnCode, rowNum);
-        }
-    }
-    if (!isNil(fieldProps.readOnly)) {
-        if (fieldProps.readOnly) {
-            tableLinkage.disabled(linkTable, tableCode, tableColumnCode, rowNum);
-        } else {
-            tableLinkage.editable(linkTable, tableCode, tableColumnCode, rowNum);
-        }
-    }
-    // 在有些场景下会强制忽略必填校验，如：模板
-    if (options?.isIgnoreRequired) {
-        tableLinkage.notRequired(linkTable, tableCode, tableColumnCode, rowNum);
-    }
-    // 处理权限，工单详情页会有字段权限控制字段可见&可编辑
-    // 可编辑字段是可见字段的子集
-    const { needShowFieldList, needEditableFieldList } = permissionMap || {};
-    if (needShowFieldList && needShowFieldList.length) {
-        if (!needShowFieldList.some(sh => sh.key === tableColumnCode)) {
-            // 可见权限字段中没有这个字段，那这个字段就不能看到
-            tableLinkage.hide(linkTable, tableCode, tableColumnCode, rowNum);
-        }
-        if (!needEditableFieldList.some(sh => sh.key === tableColumnCode)) {
-            // 可编辑权限字段中没有这个字段，那这个字段就不可编辑
-            tableLinkage.disabled(linkTable, tableCode, tableColumnCode, rowNum);
-        }
-    }
-    // 清空字段值
-    if (fieldProps.clearFieldValue) {
-        tableLinkage.value(linkTable, tableCode, tableColumnCode, rowNum, null);
-    }
-    // 设置字段值
-    if (fieldProps.needSetValue) {
-        tableLinkage.value(linkTable, tableCode, tableColumnCode, rowNum, handleValue(fieldProps.value, fieldProps.type));
-    }
-    // 字段赋值
-    if (fieldProps.copyValueSetOtherField) {
-        fieldProps.copyValueSetOtherFieldList.forEach((item, index) => {
-            let _value = null;
-            if (fieldProps.value?.length >= 0 && fieldProps.value[index]) {
-                _value = fieldProps.value[index];
-            }
-            tableLinkage.value(
-                linkTable,
-                item.tableCode,
-                item.fieldCode,
-                rowNum,
-                _value
-            );
-        });
-    }
-    // 显示选项
-    if (fieldProps.showOptions === true) {
-        tableLinkage.enum(linkTable, tableCode, tableColumnCode, rowNum, {
-            type: EnumSatisfyTypeValue.showOptions,
-            values: fieldProps.optionValue,
-        });
-    }
-    // 隐藏选项
-    if (fieldProps.showOptions === false) {
-        tableLinkage.enum(linkTable, tableCode, tableColumnCode, rowNum, {
-            type: EnumSatisfyTypeValue.hideOptions,
-            values: fieldProps.optionValue,
-        });
-    }
-    // 改变选项
-    if (fieldProps.changeOptins) {
-        tableLinkage.changeOptions(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            fieldProps.optionValue || []
-        );
-    }
-    // 追加字段值
-    if (fieldProps.additionOption) {
-        tableLinkage.additionOptions(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            fieldProps.additionOptionValue
-        );
-    }
-    if (fieldProps.changeUserRange) {
-        tableLinkage.changeOptions(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            fieldProps.optionValue || []
-        );
-    }
-    if (fieldProps.changeUserGroupRange) {
-        tableLinkage.changeOptions(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            fieldProps.optionValue || []
-        );
-    }
-    // needSetFieldHint
-    if (fieldProps.needSetNode) {
-        tableLinkage.setFieldHint(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            helper.tryParse(fieldProps.needSetNodeValue || '')
-        );
-    }
-    if (fieldProps.needDateRange) {
-        tableLinkage.setDateRange(
-            linkTable,
-            tableCode,
-            tableColumnCode,
-            rowNum,
-            fieldProps.dateRange
-        );
-    }
+  }
+}
+:global(.ant-modal-confirm-title) {
+  word-break: break-all;
+}
+:global(.ant-modal-confirm-btns .ant-btn) {
+  min-height: 32px;
+  height: auto;
+  white-space: wrap !important;
+}
+:global(.ant-table-tbody > tr > td) {
+  overflow: hidden;
+}
+
+// 兼容70版本chrome浏览器
+:global(.ant-tabs-content-holder) {
+  height: 100%;
+}
+// ::-webkit-scrollbar {
+//   width: 8px;
+//   height: 8px;
+//   background-color: #f8f8f8;
+// }
+::-webkit-scrollbar-thumb {
+  background-color: #ddd;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #ccc;
+}
+
+// tooltip展示偏移
+:global(.ant-tooltip-placement-topLeft .ant-tooltip-arrow){
+  left: 0;
+}
+// 临时处理 portal tab视图样式问题
+:global(.portal-tabs-wrapper.portal-tabs .portal-tabs-nav .portal-tabs-tab){
+  padding: 8px 15px;
+}
+
+
+
+:global(.ant-collapse){
+//  margin-bottom: 24px;
+ border-radius: 8px;
+ background: transparent;
+}
+
+:global(.ant-collapse >.ant-collapse-item > .ant-collapse-header){
+  display: flex;
+  align-items: center;
+  font-size: 16px !important;
+  border-radius: 8px !important;
+  height: 48px;
+ }
+
+ :global(.ant-collapse >.ant-collapse-item-active > .ant-collapse-header){
+  border-radius: 8px 8px 0 0 !important;
+ }
+
+ :global(.ant-collapse >.ant-collapse-item){
+  margin-bottom: 24px;
+  border-radius: 8px !important;
+  box-shadow: 0px 0px 1px 0px rgba(0,0,0,0.25), 0px 2px 4px 0px rgba(0,0,0,0.05) !important;
+ }
+
+
+ :global(.ant-collapse-content){
+  border-radius: 0 0 8px 8px !important;
+  border: none !important;
+  border-top: 1px solid #eef2f5 !important;
+ }
+
+ :global(.reply-collapse-container > .ant-tabs){
+  border-radius: 8px !important;
+  border: none !important;
+  box-shadow: 0px 0px 1px 0px rgba(0,0,0,0.25), 0px 2px 4px 0px rgba(0,0,0,0.05) !important;
+ }
+
+ :global(.ant-form > .ant-tabs){
+  border-radius: 8px !important;
+  border: none !important;
+  box-shadow: 0px 0px 1px 0px rgba(0,0,0,0.25), 0px 2px 4px 0px rgba(0,0,0,0.05) !important;
+ }
+
+ :global(.ant-form-item-children){
+   color: #172733 !important;
+ }
+
+ :global(.ant-alert-message){
+   font-size: 14px;
+}
+
+:global(.ant-tabs-nav-wrap){
+  padding-left: 0 !important;
 }
