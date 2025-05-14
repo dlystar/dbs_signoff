@@ -1,204 +1,248 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import DoVisibleRange from '@/components/DoVisibleRange';
-import styles from './style/group.less';
-import { convertToPrimaryArray } from '@/utils/T/core/helper';
-import { helper } from '@/utils/T';
-import { formily } from '@chaoswise/ui/formily';
-import { useAsyncEffect, useLatest } from 'ahooks';
-import CustomScheduledApproverGroup from './CustomScheduledApproverGroup';
-import {approvalGroupEnumField, implementGroupEnumField, approvalParamsFieldEnums} from '@/constants/common/selectGroup';
-const { FormPath } = formily;
+import React from 'react';
+import styles from './style/number.less';
+import { Input, Icon } from '@chaoswise/ui';
+import { isNil } from 'lodash-es'
+import cls from 'classnames'
 
-const IGroup = ({
-  isMultiple,
-  selectRange,
-  fieldWidth,
-  selectType,
-  onChange = () => { },
-  onBlur,
-  value,
-  placeholder,
-  disabled,
-  fieldCode,
-  additionOptions,
-  tableKey,
-  t,
-  userStatus,
-  isShowWorkOrderCount,
-  changeOptions,
-  ...props
-}) => {
-  const { isBusinessPanel, baseActions, actions, getPopupContainer, formLayout } = t || {};
-  const { setFieldState } = actions || {};
-  const { setBaseValue } = baseActions || {};
-  const [_value, setValue] = useState([])
 
-  const latestValue = useLatest(value)
+const INumber = (props) => {
 
-  // 监听字段联动【追加选项】，更新选值
-  useEffect(() => {
-    if (!Array.isArray(additionOptions) || additionOptions?.length === 0 || !isMultiple) return;
-    let newGroups = [...(value || [])];
-    const key = selectType === 'group' ? 'groupId' : 'userId';
-    const ids = convertToPrimaryArray(newGroups, key);
-    additionOptions?.forEach(g => {
-      if (ids?.indexOf(g?.[key] + '') == -1) newGroups = [...newGroups, g];
-    });
-    if (!tableKey) {
-      setBaseValue && setBaseValue(fieldCode + '_search', handleSearch(newGroups));
-    }
-    setFieldState && setFieldState(fieldCode, state => {
-      state.value = newGroups;
-    });
-    // 这里再重置一下additionOptions这个属性
-    // 不然下一次设置additionOptions属性的值和上一次值相同useEffect里面监听不到
-    // 场景：追加一个值，然后把这个值删了，然后再次触发使追加这个值，不会生效
-    setFieldState && setFieldState(fieldCode, (state) => {
-      FormPath.setIn(state, 'props.x-props.additionOptions', null);
-    })
-  }, [additionOptions]);
-  useEffect(() => {
-    let list = []
-    if (selectType == 'person') {
-      //如果仅到人 ，把value中带userId的过滤出来
-      list = Array.isArray(value) ? value.filter((item) => {
-        return !!item.userId;
-      }) : []
-    }
-    if (selectType == 'group') {
-      //如果仅到组 ，把value中不带userId的过滤出来
-      list = Array.isArray(value) ? value?.filter((item) => {
-        return !item?.userId;
-      }) : []
-    }
-    if (selectType == 'all') {
-      //如果到人到组 不做处理
-      list = Array.isArray(value) ? value : [];
-    }
-    //如果是单选，并且有value值并且value是个数组，并且数组长度大于1 就说明之前数据是多选状态，那么吧默认值直接给清掉
-    if (!isMultiple && value && Array.isArray(value) && value?.length > 1) {
-      list = []
-      helper.eventManager.emit("showMessage");
-    }
-    //如果筛选后的数组list 和之前传入的value长度相等，就说明这块规则没有变过，否则在模版建单的时候要提示并且把数据清空
-    if (list?.length == (Array.isArray(value) && value?.length)) {
-      list = value || []
-    } else {
-      list = []
-      helper.eventManager.emit("showMessage");
-    }
-    setValue(list);
-    if ((value || [])?.length > 0 && value?.length != list?.length) {
-      onChange && onChange(list);
-    }
-    if (!tableKey) {
-      setBaseValue && setBaseValue(fieldCode + '_search', handleSearch(list))
-    }
-  }, [value])
 
-  // changeOptions 重置非表格成员组字段值
-  useAsyncEffect(async () => {
-    if (!changeOptions || !actions) return;
-    if (!tableKey) {
-      const _value = await actions.getFieldValue(fieldCode)
-      if (!_value || !_value.length) return
-      const ids = changeOptions.map(ch => ch.groupId);
-      actions.setFieldValue(fieldCode, _value.filter(v => ids.includes(v.groupId)))
-    }
-  }, [changeOptions])
+    const { value, onChange, onBlur, decimalsMount = 0, unit = '', disabled, placeholder, t } = props;
+    const { isBusinessPanel } = t || {};
 
-  // changeOptions 重置表格字段值
-  useEffect(() => {
-    if (!changeOptions || !actions) return;
-    if (!latestValue.current || !latestValue.current.length) return
-    if (tableKey) {
-      const ids = changeOptions.map(ch => ch.groupId);
-      const _value = latestValue.current.filter(v => ids.includes(v.groupId))
-      onChange && onChange(_value, '', false)
-    }
-  }, [changeOptions])
 
-  /*
-    isMultiple  //是否支持多选
-    defaultValue //默认当前人
-    placeholder
-    selectRange  //选择范围
-    selectType  group person all
-  */
-  const handleChange = (value) => {
-    if (!tableKey) {
-      setBaseValue && setBaseValue(fieldCode + '_search', handleSearch(value))
-    }
-    onChange && onChange(value)
-    setValue(value)
-    onBlur && onBlur(value);
-  }
-
-  const handleSearch = (value) => {
-    if (Array.isArray(value)) {
-      return (value || [])?.map((item) => {
-        if (item.userId) {
-          return item.groupId + '|' + item.userId;
-        } else {
-          return item.groupId;
-
+    // 校验输入是否合法（负号、小数点、小数位数）
+    const isValidNumber = (val) => {
+        if (decimalsMount === 0) {
+            // 只允许整数（可负号）
+            return /^-?\d*$/.test(val);
         }
-      })
+        // 允许小数
+        const reg = new RegExp(`^-?\\d*(\\.\\d{0,${decimalsMount}})?$`);
+        return reg.test(val);
+    };
+
+
+    // 格式化数字，去除前导零，限制小数位数
+    const formatNumber = (val) => {
+        if (val === '' || val === '-' || val === '.') return val;
+        let [int, dec] = val?.split?.('.') || [];
+        int = int.replace(/^(-?)0+(\d)/, '$1$2');
+        if (decimalsMount === 0) return int;
+        if (dec) dec = dec.slice(0, decimalsMount);
+        return dec ? `${int}.${dec}` : int;
+    };
+
+
+    // 加/减操作（用decimal.js处理，保证大数和小数都不会变成科学计数法）
+    const handleStep = (type) => {
+        let currentStr = value;
+        if (!isValidNumber(currentStr) || currentStr === '' || currentStr === '-' || currentStr === '.') {
+            currentStr = '0';
+        }
+        let step = decimalsMount === 0 ? '1' : '0.' + '0'.repeat(decimalsMount - 1) + '1';
+        let nextStr;
+
+        // 处理加减法，支持负数
+        if (type === 'minus') {
+            if (currentStr.startsWith('-')) {
+                // 负数减1 = 负数加1
+                nextStr = '-' + addStr(currentStr.slice(1), step, decimalsMount);
+            } else {
+                // 比较当前值和步长
+                if (compareStr(currentStr, step) >= 0) {
+                    // 当前值大于等于步长，直接减
+                    nextStr = subStr(currentStr, step, decimalsMount);
+                } else {
+                    // 当前值小于步长，结果为负
+                    nextStr = '-' + subStr(step, currentStr, decimalsMount);
+                }
+            }
+        } else {
+            if (currentStr.startsWith('-')) {
+                // 负数加1
+                if (compareStr(currentStr.slice(1), step) > 0) {
+                    // 绝对值大于步长，结果仍为负
+                    nextStr = '-' + subStr(currentStr.slice(1), step, decimalsMount);
+                } else {
+                    // 绝对值小于等于步长，结果为正
+                    nextStr = subStr(step, currentStr.slice(1), decimalsMount);
+                }
+            } else {
+                // 正数加1
+                nextStr = addStr(currentStr, step, decimalsMount);
+            }
+        }
+
+
+        nextStr = formatNumber(nextStr);
+        onChange(nextStr);
+        onBlur && onBlur(nextStr);
+    };
+
+
+    const handleChangeNumber = (e) => {
+        const val = e.target.value;
+        if (isValidNumber(val) || val === '') {
+            onChange(val);
+            // 这个是干什么的呢@alfred.he
+            let timer = setTimeout(() => {
+                clearTimeout(timer);
+                onBlur && onBlur(formatNumber(val))
+            }, 1500)
+        }
+    };
+
+
+    const handleBlur = () => {
+        const formatted = formatNumber(value);
+        if (formatted !== value) {
+            onChange(formatted);
+        }
+        onBlur && onBlur(formatted);
+    };
+
+
+    // 只展示字符串，不做 parseFloat，避免科学计数法
+    return (
+        <div className={styles['dynamic-number']}>
+            {disabled ? (
+                <div className={styles['readonly-number']}>
+                    {isNil(value) || value === '' ? '--' : value + unit}
+                </div>
+            ) : (
+                <div className={cls(styles['number-input-wrapper'], 'ant-input')}>
+                    <Input
+                        value={value}
+                        disabled={isBusinessPanel}
+                        style={{ flex: '1' }}
+                        onChange={handleChangeNumber}
+                        onBlur={handleBlur}
+                        suffix={unit}
+                        placeholder={placeholder}
+                    />
+                    <div className={styles['number-btn-group']}>
+                        <div
+                            className={styles['number-btn']}
+                            onClick={() => handleStep('minus')}
+                            tabIndex={-1}
+                        >
+                            <Icon type="down" />
+                        </div>
+                        <div
+                            className={styles['number-btn']}
+                            onClick={() => handleStep('plus')}
+                            tabIndex={-1}
+                        >
+                            <Icon type="up" />
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+export default INumber;
+
+
+
+// 字符串加法，支持大整数和小数
+function addStr(a, b, decimalsMount = 0) {
+    let [aInt, aDec = ''] = a.split('.');
+    let [bInt, bDec = ''] = b.split('.');
+    // 补齐小数位
+    const maxDecLen = Math.max(aDec.length, bDec.length, decimalsMount);
+    aDec = aDec.padEnd(maxDecLen, '0');
+    bDec = bDec.padEnd(maxDecLen, '0');
+    // 小数部分相加
+    let decSum = '';
+    let carry = 0;
+    for (let i = maxDecLen - 1; i >= 0; i--) {
+        let sum = parseInt(aDec[i] || 0) + parseInt(bDec[i] || 0) + carry;
+        decSum = (sum % 10) + decSum;
+        carry = Math.floor(sum / 10);
     }
-  }
-
-  const changeUserGroupOptions = useMemo(() => {
-    return changeOptions?.map(op => ({
-      ...op,
-      title: op.groupName,
-      key: op.groupId,
-      type: 'group',
-      isLeaf: true,
-      id: op.groupId,
-    }))
-  }, [changeOptions])
-  if((approvalGroupEnumField.includes(fieldCode) || implementGroupEnumField.includes(fieldCode)) && !(isBusinessPanel || disabled)){
-    return <CustomScheduledApproverGroup
-    isMultiple={isMultiple}
-    onChange={handleChange}
-    value={Array.isArray(_value) ? _value : []}
-    disabled={isBusinessPanel || disabled}
-    placeholder={placeholder}
-    fieldCode={fieldCode}
-    t={t}
-    {...props}
-    />
-  }
-
-  return (
-    <div className={`${disabled ? styles['dynamic-group-disabled'] : styles['dynamic-group']} ${(!disabled || _value?.length > 0 || isBusinessPanel) ? '' : styles['empty']}`} >
-      {
-        (disabled && !_value?.length) ? <span className={styles['no-val']}>--</span>
-          : <DoVisibleRange
-            types={['group']}
-            group={{
-              multiple: isMultiple,
-              visibleGroupIds: (selectRange || [])?.map(item => item.groupId),
-              onlyGroup: selectType === 'group',
-              groupSelectable: !(selectType === 'person'),
-              ...props
-            }}
-            showValueInTag={isMultiple}
-            onChange={handleChange}
-            value={Array.isArray(_value) ? _value : []}
-            disabled={isBusinessPanel || disabled}
-            placeholder={placeholder}
-            userStatus={userStatus}
-            isShowWorkOrderCount={isShowWorkOrderCount}
-            isShow
-            className={`dynamic-visible-range ${styles['group']}`}
-            getPopupContainer={getPopupContainer}
-            formLayout={formLayout}
-            changeOptions={changeUserGroupOptions}
-          />
-      }
-    </div>
-  );
+    // 整数部分相加
+    aInt = aInt || '0';
+    bInt = bInt || '0';
+    let resInt = '';
+    let aArr = aInt.split('').reverse();
+    let bArr = bInt.split('').reverse();
+    let len = Math.max(aArr.length, bArr.length);
+    for (let i = 0; i < len; i++) {
+        let sum = parseInt(aArr[i] || 0) + parseInt(bArr[i] || 0) + carry;
+        resInt = (sum % 10) + resInt;
+        carry = Math.floor(sum / 10);
+    }
+    if (carry) resInt = carry + resInt;
+    // 拼接结果
+    decSum = decSum.replace(/0+$/, ''); // 去除小数末尾0
+    if (decimalsMount > 0 && decSum.length > decimalsMount) decSum = decSum.slice(0, decimalsMount);
+    return decSum ? `${resInt}.${decSum}` : resInt;
 }
 
-export default IGroup;
+
+// 字符串减法，支持大整数和小数（假设a>=b且都为正数）
+function subStr(a, b, decimalsMount = 0) {
+    let [aInt, aDec = ''] = a.split('.');
+    let [bInt, bDec = ''] = b.split('.');
+    // 补齐小数位
+    const maxDecLen = Math.max(aDec.length, bDec.length, decimalsMount);
+    aDec = aDec.padEnd(maxDecLen, '0');
+    bDec = bDec.padEnd(maxDecLen, '0');
+    // 小数部分相减
+    let decRes = '';
+    let borrow = 0;
+    for (let i = maxDecLen - 1; i >= 0; i--) {
+        let diff = parseInt(aDec[i] || 0) - parseInt(bDec[i] || 0) - borrow;
+        if (diff < 0) {
+            diff += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        decRes = diff + decRes;
+    }
+    // 整数部分相减
+    aInt = aInt || '0';
+    bInt = bInt || '0';
+    let resInt = '';
+    let aArr = aInt.split('').reverse();
+    let bArr = bInt.split('').reverse();
+    let len = Math.max(aArr.length, bArr.length);
+    for (let i = 0; i < len; i++) {
+        let diff = parseInt(aArr[i] || 0) - parseInt(bArr[i] || 0) - borrow;
+        if (diff < 0) {
+            diff += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        resInt = diff + resInt;
+    }
+    resInt = resInt.replace(/^0+/, '') || '0';
+    decRes = decRes.replace(/0+$/, ''); // 去除小数末尾0
+    if (decimalsMount > 0 && decRes.length > decimalsMount) decRes = decRes.slice(0, decimalsMount);
+    return decRes ? `${resInt}.${decRes}` : resInt;
+}
+
+
+// 比较两个字符串数字的大小
+function compareStr(a, b) {
+    // 去掉前导零
+    a = a.replace(/^0+/, '') || '0';
+    b = b.replace(/^0+/, '') || '0';
+
+    // 先比较整数部分长度
+    let [aInt] = a.split('.');
+    let [bInt] = b.split('.');
+    if (aInt.length !== bInt.length) {
+        return aInt.length - bInt.length;
+    }
+
+    // 长度相同，逐位比较
+    return a.localeCompare(b);
+}
