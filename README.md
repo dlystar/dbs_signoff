@@ -1,765 +1,942 @@
+import React from 'react';
 import { intl } from '@chaoswise/intl';
-import { action, observable, computed, runInAction } from '@chaoswise/cw-mobx';
-import {
-  getOrderDetailsForm,
-  getFieldLinkage,
-  getTriggerFieldList,
-  checkPermission,
-  getFieldsPermission,
-  getLoadingOrderDetails
-} from '../api';
-import { helper, checkType, getSchemaByPath } from '@/utils/T';
-import {
-  postFieldHook,
-  getAllFieldHook,
-  getNodePutAwayResult,
-} from '../../OrderCreate/api';
-import { EnumCollapseKey } from '@/pages/WorkOrderCommon/constants';
+import { action, observable, runInAction } from '@chaoswise/cw-mobx';
 import prompt from '@/utils/prompt';
-import { langUtil } from '@/lang';
-import { handleFormDataInfo, mergeFieldLinkage2FormSchema } from '@/pages/Reception/OrderCreate/model/utils.js';
-import { EnumParamsType } from '@/pages/BusinessSetting/CustomConfiguration/constant';
 import {
-  currentNodeName,
-  currentProcessor,
-} from '@/pages/Reception/common/fieldUtils';
-import moment from 'moment';
-import { initFieldHook } from '@/pages/Reception/OrderDetail/api';
-import { setCmdbSchema } from '@/pages/Reception/OrderDetail/model/utils';
-import { formatFormValues } from '@/pages/Reception/common/fieldUtils';
-
-export default class DetailContentStore {
-  @observable.ref formData = {};
-  @observable.ref formDataInfo = {};
-  @observable.ref currentformData = {};
-  @observable.ref orderInfo = {};
-  @observable.ref nodeItem = {};
-  @observable.ref dictionaryObj = {};
-  @observable.ref triggerFieldList = [];
-  @observable.ref defaultValues = {};
-  @observable.ref initFormValues = undefined;
-  @observable isApprove = false;
-  @observable.ref views = [];
-  @observable.ref edits = [];
-  @observable.ref isPermissionEnable = false;
-  /* 自定义面板页签接受的URl集合 */
-  @observable.ref iframeUrl = {};
-  /* 自定义页签多个iframe窗口🪟接收的参数集合 */
-  @observable.ref iframeTabInfo = {};
-  @observable.ref cmdbDetailData = {};
-  @observable.ref tableFieldCodes = {};
-  @observable.ref followTableInfo = undefined;
-  @observable.ref hangUpDictId = null;
-  /* 基本信息页签展开 */
-  @observable.ref basicActiveLink = [EnumCollapseKey.basicInfo];
-  /* 活动页签面板 */
-  @observable.ref activeCollapseArr = [];
-  /* 混存当前打面板页签枚举展示数组 */
-  @observable.ref cacheCollapseArr = [];
-  // 页面初始化时字段联动的结果
-  @observable.ref initFieldLinkRes = {};
-  // @observable.ref cmdbConfigFieldLinkRes = null;
-
-  @observable isFirstNode = false;
-  @observable loading = false;
-  @observable linkageLoading = false;
-  @observable formKey = '';
-  @observable.ref initCrossCheckingMap = {};
-
+  getCustomBtn,
+  getButtonPermission,
+  queryAssignInfo,
+  queryRedeployInfo,
+  submitDetailsOrder,
+  closeDetailsOrder,
+  hangUpDetailsOrder,
+  hangDownDetailsOrder,
+  getBackDetailsOrder,
+  rollBackDetailsOrder,
+  updateDetailsOrder,
+  verifyValue,
+  transferDetailsOrder,
+  urgeDetailsOrder,
+  claimDetailsOrder,
+  submitCreateOrder,
+  copyDetailsOrder,
+  withdrawDetailsOrder,
+  draftDetailsOrder,
+  checkIsK2Process,
+  dealEndorseOrderApi,
+  endorseOrderApi,
+  addCopyTaskApi,
+  getCurrentNoAuthPeople,
+  queryAddAssigneeInfo,
+  addApproverDetailsOrder,
+  addAssigneeDetailsOrder,
+  getNoFinishSubTaskHandlerUser,
+  rollBackProcessedByDetailsOrder,
+  submitOriginHandle,
+  retryDetailsOrder,
+  deleteOrder,
+  applyAssistedApi,
+  handingAssistedApi,
+  getNoAuthAssistedUserIdApi,
+  cancelAssisted,
+  rollbackAssisted,
+} from '../DetailFooter/api';
+import { delDraft, getListData } from '@/pages/ListNew/api';
+import { checkType, helper } from '@/utils/T';
+import { langUtil } from '@/lang';
+import { getNodeHandlerConfig } from '@/pages/Reception/OrderDetail/api'
+import { eventManager } from '@/utils/T/core/helper';
+export default class DetailFooterStore {
+  @observable.ref buttonList = [];
+  @observable.ref assignInfo = {};
+  @observable.ref redeployInfo = {};
+  @observable.ref loadings = {
+    claim: false,
+    close: false,
+    copy: false,
+    getBack: false,
+    hangDown: false,
+    hangUp: false,
+    rollBack: false,
+    submit: false,
+    transfer: false,
+    update: false,
+    urge: false,
+    queryAssign: false,
+    queryRedeploy: false,
+    withdraw: false,
+    saveDraft: false,
+    dealEndorse: false,
+    endorse: false,
+    addCopyTask: false,
+    addAssignee: false,
+    rollBackProcessedBy: false,
+    commitOriginalHandler: false,
+    delete: false,
+  };
+  @observable.ref isShow = false;
+  @observable.ref isK2Flow = false;
+  @observable.ref transK2Url = '';
+  @observable.ref customBtns = []; // 自定义按钮列表
+  @observable.ref noAuthPeopleIds = []; // 自定义按钮列表
+  @observable.ref addAssigneeInfo = {};
+  @observable.ref noAuthIds = [];
+  @observable.ref assistedSettingData = {};
+  // 节点配置
+  @observable.ref nodeConfig = {};
   @observable.ref traceId = '';
-
-  constructor(dictStore) {
-    // 数据字典store
-    runInAction(() => {
-      this.dictStore = dictStore;
-    });
-  }
-
-  /* 判断当前字段变动是否需要重新加载自定义页签url */
-  @action
-  initIframeUrlOrNot = (fieldName) => {
-    let load = false;
-    Object.keys(this.iframeTabInfo || {})?.forEach((key) => {
-      let paramsObj = [];
-      if (this.iframeTabInfo[key]?.inputParameter) {
-        paramsObj = JSON.parse(this.iframeTabInfo[key]?.inputParameter);
-      }
-      paramsObj?.forEach((ele) => {
-        switch (ele.type) {
-          case EnumParamsType.FIELDS: {
-            if (ele.synchronism) {
-              ele.fieldValues?.forEach((el) => {
-                let paramMdlDefKey = el.split('/')[0];
-                if (paramMdlDefKey.indexOf(':') > -1) {
-                  paramMdlDefKey = paramMdlDefKey.split(':')[0];
-                }
-                if (
-                  paramMdlDefKey == this.orderInfo?.preNum &&
-                  el.split('/')[1] == fieldName
-                ) {
-                  load = true;
-                }
-              });
-            }
-            break;
-          }
-          case EnumParamsType.CUSTOM: {
-            if (ele.synchronism && ele.customValue == fieldName) {
-              load = true;
-            }
-            break;
-          }
-        }
-      });
-    });
-    if (load) {
-      this.initIframeUrl();
-    }
-  };
-
-  /* 重加载自定义页签Url */
-  @action
-  initIframeUrl = () => {
-    try {
-      // 如果有最新状态的formdata，使用当前最新数据传1参
-      let formData = {};
-      if (Object.keys(this.currentformData || {})?.length > 0) {
-        formData = this.currentformData;
-      } else {
-        formData = this.formData;
-      }
-      // 获取表格form数据
-      let tableData = [];
-      let keys = Object.keys(formData || {});
-      keys?.forEach((keyValue) => {
-        if (
-          keyValue.indexOf('TABLE_FORM') > -1 &&
-          checkType.isArray(formData?.[keyValue])
-        ) {
-          tableData?.push(formData?.[keyValue]?.[0]);
-        }
-      });
-      const _iframeUrl = Object.assign({}, this.iframeUrl);
-      Object.keys(this.iframeTabInfo || {})?.forEach((key) => {
-        let paramsObj = JSON.parse(this.iframeTabInfo[key]?.inputParameter);
-        let paramsStr = [];
-        paramsObj?.forEach((ele) => {
-          switch (ele.type) {
-            case EnumParamsType.FIELDS: {
-              //选择字段参数
-              let keyValue = '';
-              ele.fieldValues?.forEach((el) => {
-                let paramMdlDefKey = (el || '').split('/')[0];
-                if (paramMdlDefKey.indexOf(':') > -1) {
-                  paramMdlDefKey = paramMdlDefKey.split(':')[0];
-                }
-                let property = el.split('/')[1] ? el.split('/')[1] : '';
-                if (paramMdlDefKey == this.orderInfo?.preNum) {
-                  if (formData.hasOwnProperty(property)) {
-                    let value = formData[property];
-                    let valueType = Object.prototype.toString.call(value);
-                    if (
-                      valueType == '[object Object]' ||
-                      valueType == '[object Array]'
-                    ) {
-                      // 如果参数类型是成员组件的值 要解析数据为成员id字符串
-                      value = JSON.stringify(value);
-                    }
-                    keyValue += value;
-                  }
-                  tableData?.forEach((ta) => {
-                    //遍历表格字段的数据
-                    if (ta.rowData.hasOwnProperty(property)) {
-                      let _value = ta.rowData[property];
-                      keyValue += _value;
-                    }
-                  });
-                }
-              });
-              if (keyValue != '') {
-                paramsStr?.push(`${ele.fieldCode}=${keyValue}`);
-              }
-              break;
-            }
-            case EnumParamsType.CUSTOM: {
-              //自定义字段参数
-              if (formData.hasOwnProperty(ele.customValue)) {
-                paramsStr?.push(
-                  `${ele.fieldCode}=${formData[ele.customValue]}`
-                );
-              }
-              tableData?.forEach((ta) => {
-                //遍历表格字段的数据
-                if (ta.rowData.hasOwnProperty(ele.customValue)) {
-                  paramsStr?.push(
-                    `${ele.fieldCode}=${ta.rowData[ele.customValue]}`
-                  );
-                }
-              });
-              break;
-            }
-            case EnumParamsType.REGULAR: {
-              //固定参数
-              ele.regularKeys?.forEach((el) => {
-                let val = el ? this.orderInfo[el] : undefined;
-                if (['createdTime', 'updatedTime']?.includes(el) && val) {
-                  val = moment(val)?.format('x');
-                }
-                if (el === 'handlerPersonIds')
-                  val = currentProcessor(
-                    this.orderInfo.currentNodeId,
-                    this.orderInfo['nodeIdsMap']
-                  );
-                if (el === 'nodeName')
-                  val = currentNodeName(
-                    this.orderInfo.currentNodeId,
-                    this.orderInfo['nodeIdsMap']
-                  );
-                paramsStr?.push(`${el}=${val}`);
-              });
-              break;
-            }
-          }
-        });
-        _iframeUrl[key] = `${this.iframeTabInfo[key]?.uri}?${paramsStr?.join(
-          '&'
-        )}`;
-      });
-      this.updateState({ iframeUrl: _iframeUrl });
-    } catch (err) {
-      console.log(err, 'initIframeUrl-函数报错');
-    }
-  };
-
-  /* 缓存最新的表达数据 */
-  @action
-  updateCurrentFormData = (name, value) => {
-    let newFormData = helper.deepClone(
-      Object.keys(this.currentformData || {})?.length > 0
-        ? this.currentformData
-        : this.formData
-    );
-    newFormData[name] = value;
-    this.updateState({ currentformData: { ...newFormData } });
-  };
-
-  @action
-  getFormAndInfo = async ({ id, draftFlag, nodeItem }, callback) => {
-    this.loading = false;
-    // nodeItem 主要用于并行网关，当前多个节点切换的时候用
-    // 一般情况刷新页面我们不用传nodeId，自有后端处理
-    let nodeId = nodeItem?.nodeId;
-    console.log('3.开始加载工单详情...', performance.now());
-
-    Promise.all([
-      getLoadingOrderDetails({id, draftFlag, nodeId}),
-      getFieldLinkage({
-        workOrderId: id,
-        eventType: 'LOADING',
-        nodeId: nodeId  // TODO: 会签审批时需要传参
-      })
-    ]).then(async res => {
-      const [workOrderRes, fieldLinkRes] = res;
-      console.log('4.获取工单详情和字段联动', performance.now(), workOrderRes);
-      runInAction(async () => {
-        const { formData, currentVersionNodeList, ...orderInfo } = workOrderRes?.data || {};
-        let paraseFormData = formData ? JSON.parse(formData) : {};
-        console.log('5.获取工单详情和字段联动-runInAction', performance.now());
-        let schemaReq = await getSchemaByPath(orderInfo?.schemaName);
-        console.log('6.获取工单详情和字段联动-runInAction-callback', performance.now());
-        // 2.设置表单值
-        this.formData = paraseFormData;
-        // 3.处理工单已完成状态
-        const { currentNodeId, dataStatus, preNum, readOnlyflag } = orderInfo;
-        orderInfo.readOnlyflag = this.checkCRStatusAndGetReadOnly(
-          dataStatus,
-          preNum,
-          paraseFormData,
-          readOnlyflag,
-        );
-
-        const { schema, triggerFields } = mergeFieldLinkage2FormSchema(schemaReq, fieldLinkRes?.data?.triggerFields, paraseFormData, {
-          ...orderInfo
-        })
-
-        let _nodeItem = nodeItem || orderInfo?.nodeIdsMap?.find(item => item.nodeId === currentNodeId)
-        if (!_nodeItem) {
-          _nodeItem = currentVersionNodeList?.find(item => item.nodeId === currentNodeId)
-        }
-        runInAction(() => {
-          this.nodeItem = _nodeItem || {};
-          this.orderInfo = {
-            readOnlyflag: orderInfo.readOnlyflag,
-            ...workOrderRes.data || {},
-            formData: paraseFormData,
-            workOrderId: id,
-            processDefId: workOrderRes.data?.mdlDefCode,
-            nodeId: currentNodeId,
-            nodeItem: _nodeItem || {},
-            currentVersionNodeList,
-            schema
-          };
-          this.formDataInfo = schema
-          this.initFieldLinkRes = { triggerFields }
-        })
-        callback && callback(schema)
-      })
-    }).catch(err => {
-      this.loading = false;
-      console.error('this.getFormAndInfo error', err);
-    });
-  };
-
-  @observable.ref copySchemaParams = {}; // 储存权限
-
-  // 取当前用户对表单中【表格】的权限信息
-  @action checkPermission = (nodeId, processDefId, type) => {
-    checkPermission({ nodeId, processDefId, type }).then((resp) =>
-      runInAction(() => {
-        const { followTableColFlag } = resp?.data || {};
-        if (followTableColFlag) this.followTableInfo = resp?.data;
-      })
-    );
-  };
-
-  @action
-  setFormInfo = (data) => {
-    const _copySchemaParams = JSON.parse(
-      JSON.stringify(this.copySchemaParams || {})
-    );
-    const { schema } = handleFormDataInfo(
-      data.schema,
-      _copySchemaParams.fieldLinkRes,
-      _copySchemaParams.noImpectFields,
-      null,
-      { resetDefaultValue: true }
-    );
-    this.formDataInfo = JSON.parse(JSON.stringify(schema));
-  };
-
-  @computed get tableList () {
-    const array = [];
-    const fn = (arr) => {
-      arr.forEach(item => {
-        if (item['x-component'] === 'TABLE_FORM') {
-          array.push(item.key)
-        }
-        if (item.properties) {
-          fn(Object.values(item.properties))
-        }
-      })
-    }
-    fn(Object.values(this.formDataInfo?.properties || {}))
-    return array;
-  }
-
-  // 字段联动
-  @action
-  getFieldLinkage = (params = {}) => {
-    if (params.eventType === 'LOADING') this.initFormValues = params.values; // 储存初始化表单值，RELOAD用
-    // 如果类型为：【字段更改时触发字段联动】 并且 更改的字段没有设置字段联动时，不发送请求
-    // formData参数：
-    //  LOADING： 初始化表单值+默认值
-    //  RELOAD： 初始化表单值+默认值
-    //  ONCHANGE： 表单值
-    const _value =
-      params.eventType === 'LOADING'
-        ? {
-          ...this.defaultValues,
-          ...params.values,
-        }
-        : params.eventType === 'RELOAD'
-          ? {
-            ...this.defaultValues,
-            ...this.initFormValues,
-          }
-          : {
-            ...params.values,
-          };
-    // 表格字段联动用：key--> 表格的fieldCode ; value--> 表格的行数-1，没有行数时为-1
-    const tableRowMap = {};
-    this.tableList?.forEach((t) => {
-      const val = _value?.[t] || (this.initFormValues || {})[t];
-      tableRowMap[t] = val && Array.isArray(val) ? val?.length - 1 : -1;
-    });
-    formatFormValues(this.formDataInfo, _value);
-    // if(changeLoading && this.tableList?.length > 0) changeLoading();
-    const _params = {
-      processDefKey: params.preNum,
-      formData: _value,
-      eventType: (params.eventType === 'RELOAD' || params.eventType === 'RELOADING') ? 'LOADING' : params.eventType,
-      formId: params.formId,
-      nodeId: this.nodeItem?.nodeId,
-      triggerFieldCode: params.fieldCode,
-      processInstanceId: params.processInstanceId,
-      tableRowMap,
-      formTriggerType: params.formTriggerType || 'PROCESS_FORM',
-    };
-    if (params.eventType === 'RELOADING') {
-      delete _params.formData
-      delete _params.tableRowMap
-    }
-    if (params.fieldEvent) {
-      // 文件 新增/删除 新增的参数
-      _params.fieldEvent = params.fieldEvent;
-    }
-    if (this.orderInfo?.workOrderId) {
-      _params.workOrderId = this.orderInfo?.workOrderId || '';
-    }
-    const _latestFieldLinkParams = JSON.stringify(_params);
-    if (params.eventType !== 'RELOADING') {
-      // 最后一次触发字段联动的参数和此刻的参数相同那还用的着触发字段联动吗？
-      // 主要是表格里面的列不知道怎么回事，只要一失焦就会触发一次字段联动
-      // 只要字段的值没变化那就不用触发字段联动的啊
-      if (this.latestFieldLinkParams === _latestFieldLinkParams) {
-        return Promise.resolve();
-      }
-      // 把最后一次触发字段联动的参数暂存起来
-      this.latestFieldLinkParams = _latestFieldLinkParams;
-    }
-    return new Promise((resolve, reject) => {
-      this.linkageLoading = true;
-      getFieldLinkage(_params)
-        .then(
-          (resp) =>
-            runInAction(() => {
-              // ---------
-              // 在上面我们暂存了上次触发字段联动的表单字段的值，是为了让字段值在没有任何变化的情况下不必再触发字段联动
-              // 但是在字段联动的结果中我们可能会对字段值做处理——清空字段值&设置字段值
-              // 此时我们需要更新一下暂存字段的值，使得下次字段联动能正常触发
-              const paramsCache = JSON.parse(_latestFieldLinkParams || '{}');
-              const valueCache = paramsCache.formData || {};
-              resp.data?.triggerFields?.filter(item => item.clearFieldValue)?.forEach((item) => {
-                if (item.tableCode) {
-                  if (item.rowNum > -1) {
-                    const rowData = valueCache[item.tableCode]?.find(
-                      (row) => row.rowNum == item.rowNum
-                    );
-                    if (rowData) {
-                      rowData[item.fieldCode] = null;
-                    }
-                  }
-                } else {
-                  valueCache[item.fieldCode] = null;
-                }
-              });
-              resp.data?.triggerFields?.filter(item => item.needSetValue)?.forEach((item) => {
-                if (item.tableCode) {
-                  if (item.rowNum > -1) {
-                    const rowData = valueCache[item.tableCode]?.find(
-                      (row) => row.rowNum == item.rowNum
-                    );
-                    if (rowData) {
-                      rowData[item.fieldCode] = item.value;
-                    }
-                  }
-                } else {
-                  valueCache[item.fieldCode] = item.value;
-                }
-              });
-              resp.data?.triggerFields?.forEach?.(item => {
-                if(item.key == 'uat'){
-                  console.log(`uat字段被字段联动更改了！`, item)
-                }
-              })
-              this.latestFieldLinkParams = JSON.stringify(paramsCache);
-              // ------------------
-              if (resp.data?.triggerFields?.length) {
-                resp.data.triggerFields = resp.data.triggerFields.filter(tr => tr.type !== 'ADD_GROUP')
-              }
-              return resolve(resp.data);
-            }),
-          (resp) =>
-            runInAction(() => {
-              return reject(
-                (resp && resp.msg) ||
-                langUtil.t(
-                  intl
-                    .get('8b214c62-817f-433e-84cd-2636e2fe5633')
-                    .d('请求出错了~')
-                )
-              );
-            })
-        )
-        .finally(() =>
-          setTimeout(() => {
-            runInAction(() => {
-              this.linkageLoading = false;
-            });
-          }, 0)
-        );
-    });
-  };
-
-  @action
-  getTriggerFieldList = (mdlDefKey) => {
-    const params = {
-      processDefKey: mdlDefKey,
-    };
-    getTriggerFieldList(params).then(
-      (resp) =>
-        runInAction(() => {
-          this.triggerFieldList = resp.data;
-        }),
-      (resp) => runInAction(() => { })
-    );
-  };
-
-  @action
-  updateNodeItem = (item) => {
-    console.log(item, 'nodeItem已更新=========');
-    this.nodeItem = item;
-  };
-
-  @action
-  updateFormData = (data) => {
-    this.formData = {
-      ...this.formData,
-      ...data,
-    };
-    this.orderInfo = {
-      ...this.orderInfo,
-      formData: {
-        ...this.orderInfo.formData,
-        ...data,
-      },
-    };
-  };
-
-  // 获取taskId逻辑
-  @computed get taskId() {
-    const { nodeIdsMap } = this.orderInfo;
-    let taskId = '';
-    if (
-      this.nodeItem?.taskInfoList &&
-      this.nodeItem?.taskInfoList?.[0]?.taskId
-    ) {
-      taskId = this.nodeItem.taskInfoList?.[0]?.taskId;
-    } else {
-      if (nodeIdsMap) {
-        for (let i = 0;i < nodeIdsMap?.length;i++) {
-          if (
-            nodeIdsMap[i].taskInfoList &&
-            nodeIdsMap[i].taskInfoList?.[0]?.taskId
-          ) {
-            taskId = nodeIdsMap[i].taskInfoList?.[0]?.taskId;
-          }
-        }
-      }
-    }
-    return taskId;
-  }
 
   @action
   updateState = (keyToVal = {}) => {
     Object.keys(keyToVal || {})?.forEach((key) => (this[key] = keyToVal[key]));
   };
 
-  @action detailsSetSchema = (formData) => {
-    this.formDataInfo = setCmdbSchema(this.formDataInfo, formData);
-    this.setFormInfo({
-      schema: this.formDataInfo,
-    });
-  };
+  @action
+  getNodeConfig = (processDefId, currentNodeId) => {
+    getNodeHandlerConfig(processDefId, currentNodeId).then(res => {
+      runInAction(() => {
+        this.nodeConfig = res.data || {};
+      })
+    })
+  }
 
   @action
-  checkCRStatusAndGetReadOnly = (
-    dataStatus,
-    preNum,
-    formData,
-    readOnlyflag,
-    formFlag
-  ) => {
-    // default readOnlyflag is reponse
-    let _readOnlyflag = readOnlyflag;
-    const { prenum } = window.DOSM_CONFIG?.dbs?.cr || {};
-    // 已完成，已关闭的工单必须为只读
-    if (dataStatus == 20 || dataStatus == 40) {
-      _readOnlyflag = true;
-    }
-    // If it's already read-only, return directly
-    if (formFlag && formFlag == 'readonly') {
-      _readOnlyflag = true;
-    } else if (prenum === preNum && formData) {
-      const formDataObj =
-        typeof formData === 'string' ? JSON.parse(formData) : formData;
-      const crStatus = formDataObj?.crStatus_value;
-      // Check if it's a Normal CR process and the status is Closed Cancel or Rejected
-      if (
-        crStatus &&
-        ['Closed Cancel', 'Rejected'].some((status) =>
-          crStatus.includes(status)
-        )
-      ) {
-        _readOnlyflag = true;
-      }
-    }
-    return _readOnlyflag;
-  };
-
-  @action
-  postFieldHook = (params) => {
-    if (!params.dataCode) return Promise.resolve();
-    const _params = {
-      fieldCode: params.fieldCode,
-      dataCode: params.dataCode,
-      dirtCode: params.dirtCode,
-      dataLevel: params.dataLevel,
-      formId: params.formId,
-      formDataMap: params.formDataMap,
-    };
-    return new Promise((resolve, reject) => {
-      this.linkageLoading = true;
-      postFieldHook(_params)
-        .then(
-          (resp) =>
-            runInAction(() => {
-              return resolve(resp.data);
-            }),
-          (resp) =>
-            runInAction(() => {
-              return reject(
-                (resp && resp.msg) ||
-                langUtil.t(
-                  intl
-                    .get('8b214c62-817f-433e-84cd-2636e2fe5633')
-                    .d('请求出错了~')
-                )
-              );
-            })
-        )
-        .finally(() =>
-          setTimeout(() => {
-            runInAction(() => {
-              this.linkageLoading = false;
-            });
-          }, 0)
-        );
-    });
-  };
-
-  @action
-  initFieldHook = (params) => {
-    if (!params?.length) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      this.linkageLoading = true;
-      initFieldHook(params)
-        .then(
-          (resp) =>
-            runInAction(() => {
-              return resolve(resp.data);
-            }),
-          (resp) =>
-            runInAction(() => {
-              return reject(
-                (resp && resp.msg) ||
-                langUtil.t(
-                  intl
-                    .get('8b214c62-817f-433e-84cd-2636e2fe5633')
-                    .d('请求出错了~')
-                )
-              );
-            })
-        )
-        .finally(() =>
-          setTimeout(() => {
-            runInAction(() => {
-              this.linkageLoading = false;
-            });
-          }, 0)
-        );
-    });
-  };
-
-  @action
-  getAllFieldHook = (formId, cb) => {
-    return getAllFieldHook(formId).then(
+  submitOrder = (params, successCallBack, dbsAiRequestError, resolve, reloadFormFieldLinkageFn) => {
+    if (this.verdictAnyLoading()) return;
+    this.changeLoading('submit', true);
+    submitDetailsOrder(params).then(
       (resp) =>
         runInAction(() => {
-          if (cb) {
-            cb && cb(resp.data);
-          } else {
-            this.initCrossCheckingMap = resp.data;
+          const { data } = resp;
+          if (checkType.isObject(data)) {
+            if (data.redirectRemoteSys && data.remoteSysHref) {
+              window.open(data.remoteSysHref);
+            }
           }
+          if(data?.needDialog || data?.aiReqError) {
+            dbsAiRequestError(data)
+          } else {
+            successCallBack && successCallBack();
+            resolve && resolve();
+            prompt.success(
+              intl.get('c72bee5c-cda6-4064-a7c9-dc8befb1d0e1').d('提交成功')
+            );
+          }
+          resolve && resolve();
+          this.changeLoading('submit', false);
         }),
       (resp) =>
         runInAction(() => {
-          return (
-            (resp && resp.msg) ||
-            langUtil.t(
-              intl.get('8b214c62-817f-433e-84cd-2636e2fe5633').d('请求出错了~')
-            )
-          );
+          resolve && resolve();
+          this.changeLoading('submit', false);
+          // prompt.error(resp.msg);
+          helper.messageError(resp);
+          // 任意处理人提交工单，后端报错之后前端刷新
+          if (resp.code == 130096) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 2000);
+          } else if (resp.code === 100001) {
+            reloadFormFieldLinkageFn && reloadFormFieldLinkageFn()
+          }
+        })
+    );
+  };
+  @action
+  submitCreateOrder = (params, successCallBack, errorCallBack) => {
+    this.loadingAsync(true);
+    submitCreateOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          const { data } = resp;
+          this.loadingAsync(false);
+          if (checkType.isObject(data)) {
+            if (data.redirectRemoteSys && data.remoteSysHref) {
+              window.open(data.remoteSysHref);
+            }
+          }
+          successCallBack && successCallBack();
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.loadingAsync(false);
+          helper.messageError(resp);
+          // resp?.msg && prompt.error(resp.msg);
+          errorCallBack && errorCallBack();
         })
     );
   };
 
   @action
-  setChangedColumnField = (tableCode, columnCode) => {
-    this.tableFieldCodes[tableCode] = columnCode;
-  };
-
-  @action
-  updateState = (keyToVal = {}) => {
-    for (const [key, val] of Object.entries(keyToVal)) {
-      this[key] = val;
-    }
-  };
-
-  @action
-  getFieldsPermission = (id) => {
-    getFieldsPermission(id).then((resp) => {
-      runInAction(() => {
-        const { fields } = resp.data || {};
-        let views = [],
-          edits = [];
-        fields?.map((item) => {
-          if (item.type === 'VIEW') {
-            views = [...item.fields];
-          } else {
-            edits = [...item.fields];
-          }
-        });
-        this.views = views;
-        this.edits = edits;
-      });
-    });
-  };
-
-  @observable.ref putAwayList = []; //默认隐藏分组
-
-  @action
-  getNodePutAwayResult = (params) => {
-    getNodePutAwayResult(params).then(
+  closeOrder = (params, successCallBack, failureCallBack) => {
+    this.changeLoading('close', true);
+    closeDetailsOrder(params).then(
       (resp) =>
         runInAction(() => {
-          this.putAwayList = resp?.data || [];
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('4fb7c8a8-eb61-493a-8f73-aff4c9d6462b').d('关闭成功！')
+            )
+          );
+          this.changeLoading('close', false);
         }),
-      (err) =>
+      (resp) =>
         runInAction(() => {
-          prompt.error(
-            (err && err.msg) ||
+          this.changeLoading('close', false);
+          failureCallBack && failureCallBack();
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  hangUpOrder = (params, successCallBack) => {
+    this.changeLoading('hangUp', true);
+    hangUpDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('ba3a0356-d24d-464c-8069-9788f81ed8dc').d('挂起成功！')
+            )
+          );
+          this.changeLoading('hangUp', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('hangUp', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  hangDownOrder = (params, successCallBack) => {
+    this.changeLoading('hangDown', true);
+    hangDownDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('2ef7c28c-94ef-4d30-a741-846c1c1b32e5').d('解挂成功！')
+            )
+          );
+          this.changeLoading('hangDown', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('hangDown', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  getBackOrder = (params, successCallBack, extraCallback) => {
+    this.changeLoading('getBack', true);
+    getBackDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('a19831d8-290f-4143-8031-f8dec532abbf').d('取回成功！')
+            )
+          );
+          this.changeLoading('getBack', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('getBack', false);
+          prompt.error('Close Cancel Failed');
+          extraCallback && extraCallback();
+        })
+    );
+  };
+
+  @action
+  rollBackOrder = (params, successCallBack) => {
+    this.changeLoading('rollBack', true);
+    rollBackDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('90d74cde-76b1-4237-a3b9-fe0b9d005fcc').d('回退成功！')
+            )
+          );
+          this.changeLoading('rollBack', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('rollBack', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  rollBackProcessedByOrder = (params, successCallBack) => {
+    this.changeLoading('rollBackProcessedBy', true);
+    rollBackProcessedByDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('90d74cde-76b1-4237-a3b9-fe0b9d005fcc').d('回退成功！')
+            )
+          );
+          this.changeLoading('rollBackProcessedBy', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('rollBackProcessedBy', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  verifyValue = (params, successCallBack, loadingType = 'update') => {
+    if (this.verdictAnyLoading()) return;
+    this.changeLoading(loadingType, true);
+    verifyValue(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading(loadingType, false);
+          successCallBack && successCallBack(resp.data);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading(loadingType, false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  updateOrder = (params, successCallBack, resolve) => {
+    // if(this.verdictAnyLoading()) return;
+    // this.changeLoading('update', true);
+    updateDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          parent.postMessage(
+            {
+              project: 'dosm',
+              type: 'updateWorkOrderSuccess',
+            },
+            window.location.origin
+          );
+          this.changeLoading('update', false);
+          resolve && resolve();
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('update', false);
+          // prompt.error(resp.msg);
+          helper.messageError(resp);
+          parent.postMessage(
+            {
+              project: 'dosm',
+              type: 'updateWorkOrderFail',
+              data: {
+                msg: resp.msg,
+              },
+            },
+            window.location.origin
+          );
+          resolve && resolve();
+        })
+    );
+  };
+  @action
+  retryOrder = (params, successCallBack, failureCallBack) => {
+    if (this.verdictAnyLoading()) return;
+    this.changeLoading('retry', true);
+    retryDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          if (resp?.data) {
+            successCallBack && successCallBack();
+          } else {
+            failureCallBack && failureCallBack();
+          }
+          this.changeLoading('retry', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('retry', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  transferOrder = (params, successCallBack) => {
+    this.changeLoading('transfer', true);
+    transferDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('58914bdf-b17c-4524-98dd-adbcf56bd3b6').d('转派成功！')
+            )
+          );
+          this.changeLoading('transfer', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('transfer', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  addApprover = (params, successCallBack) => {
+    this.changeLoading('transfer', true);
+    addApproverDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
             langUtil.t(
               intl
-                .get('8b214c62-817f-433e-84cd-2636e2fe5633')
-                .d('请求出错了~')
+                .get('ab7fc6ca-c454-43aa-9f30-9837ed9c774f')
+                .d('添加审批人成功!')
             )
           );
+          this.changeLoading('transfer', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('transfer', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  addAssignee = (params, successCallBack) => {
+    this.changeLoading('transfer', true);
+    addAssigneeDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl
+                .get('05ab977b-16fb-48e2-9ac1-19ba66a0b6b1')
+                .d('添加处理人成功!')
+            )
+          );
+          this.changeLoading('transfer', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('transfer', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  endorseOrder = (params, successCallBack) => {
+    this.changeLoading('endorse', true);
+    endorseOrderApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('248c2b87-3525-4635-ad9a-e941eea63990').d('加签成功！')
+            )
+          );
+          this.changeLoading('endorse', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('endorse', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  dealEndorseOrder = (params, successCallBack) => {
+    this.changeLoading('dealEndorse', true);
+    dealEndorseOrderApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('bc82c3c9-ec6d-45f5-a0f0-46c21d75b867').d('处理加签成功')
+            )
+          );
+          this.changeLoading('dealEndorse', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('dealEndorse', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  applyAssisted = (params, successCallBack) => {
+    this.changeLoading('applyAssisted', true);
+    applyAssistedApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            intl.get('2117b15d-319b-4ff5-ab1b-ee7b12aa7557').d('申请协办成功')
+          );
+          this.changeLoading('applyAssisted', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('applyAssisted', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  handingAssisted = (params, successCallBack) => {
+    this.changeLoading('handingAssisted', true);
+    handingAssistedApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            intl.get('29bd2287-ab7f-4937-b473-2dbda786dc0a').d('处理成功')
+          );
+          this.changeLoading('handingAssisted', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('handingAssisted', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  cancelAssisted = (params, successCallBack) => {
+    this.changeLoading('cancelAssisted', true);
+    cancelAssisted(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            intl.get('3a79218f-f5cf-475d-a7b5-7163d47bad9d').d('取消协办成功')
+          );
+          this.changeLoading('cancelAssisted', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('cancelAssisted', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  rollbackAssisted = (params, successCallBack) => {
+    this.changeLoading('rollbackAssisted', true);
+    rollbackAssisted(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            intl.get('ec11ca94-5868-41d4-b679-52acd66c1440').d('退回协办成功')
+          );
+          this.changeLoading('rollbackAssisted', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('rollbackAssisted', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  ccToOrder = (params, successCallBack) => {
+    this.changeLoading('addCopyTask', true);
+    addCopyTaskApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('b34e5ebf-1da2-4c96-84ef-540ca16a9408').d('抄送成功！')
+            )
+          );
+          this.changeLoading('addCopyTask', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('addCopyTask', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  getCurrentNoAuthPeople = (params) => {
+    getCurrentNoAuthPeople(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.noAuthPeopleIds = resp.data || [];
+        }),
+      (resp) =>
+        runInAction(() => {
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  getNoAuthAssistedUserId = (params) => {
+    getNoAuthAssistedUserIdApi(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.assistedSettingData = resp.data || {};
+        }),
+      (resp) =>
+        runInAction(() => {
+          prompt.error(resp.msg);
         })
     );
   };
 
-  @observable.ref cmdbTabStore = {}; // 配置项标签 store
-  @action getCmdbTabStore = (type, data) => {
-    if (this.cmdbTabStore[type]) {
-      return this.cmdbTabStore[type];
-    } else if (data) {
-      this.cmdbTabStore = {
-        ...this.cmdbTabStore,
-        [type]: data,
-      };
-      return data;
-    }
-    return null;
+  @action
+  urgeOrder = (params, successCallBack) => {
+    this.changeLoading('urge', true);
+    urgeDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          this.changeLoading('urge', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('urge', false);
+          prompt.error(resp.msg);
+        })
+    );
   };
+
+  @action
+  claimOrder = (params, successCallBack) => {
+    this.changeLoading('claim', true);
+    claimDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl.get('e0a9be03-c7b6-4cd7-a8d3-12a17c746991').d('领取成功！')
+            )
+          );
+          this.changeLoading('claim', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('claim', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  copyOrder = (params, successCallBack) => {
+    if (this.verdictAnyLoading()) return;
+    copyDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack(resp.data);
+          prompt.success(
+            langUtil.t(
+              intl.get('ab69a508-7389-43f4-ad9e-3da4c550b539').d('复制成功！')
+            )
+          );
+        }),
+      (resp) =>
+        runInAction(() => {
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  getCustomBtn = (params) => {
+    if (params) {
+      params.traceId = this.traceId
+    }
+    getCustomBtn(params)
+      .then((res) =>
+        runInAction(() => {
+          const customBtns = res.data || [];
+          // 定制逻辑：检查是否存在 Reopen 按钮
+          const hasReopenBtn = customBtns.some(btn => btn.name === 'Reopen');
+          // 如果存在 Reopen 按钮，只保留 Reopen 按钮
+          this.customBtns = hasReopenBtn 
+            ? customBtns.filter(btn => btn.name === 'Reopen')
+            : customBtns;
+        })
+      )
+      .catch((err) => {
+        prompt.error(
+          (err && err.msg) ||
+            intl.get('8b214c62-817f-433e-84cd-2636e2fe5633').d('请求出错了~')
+        );
+      });
+  };
+
+  @action
+  getPermission = (params) => {
+    getButtonPermission(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.buttonList =
+            resp.data?.filter((btn) => btn.btnStatus == 1) || [];
+          this.isShow = true;
+        }),
+      (resp) => runInAction(() => {})
+    );
+  };
+  @action
+  queryAssignInfo = (params, successCallBack) => {
+    this.changeLoading('queryAssign', true);
+    queryAssignInfo(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.assignInfo = resp.data;
+          successCallBack && successCallBack(this.assignInfo);
+          this.changeLoading('queryAssign', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('queryAssign', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  queryRedeployInfo = (params, successCallBack) => {
+    this.changeLoading('queryRedeploy', true);
+    queryRedeployInfo(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.redeployInfo = resp.data;
+          successCallBack && successCallBack(this.redeployInfo);
+          this.changeLoading('queryRedeploy', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('queryRedeploy', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  queryAddAssigneeInfo = (params, successCallBack) => {
+    this.changeLoading('addAssignee', true);
+    queryAddAssigneeInfo(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.addAssigneeInfo = resp.data;
+          successCallBack && successCallBack(this.addAssigneeInfo);
+          this.changeLoading('addAssignee', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('addAssignee', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+  @action
+  getNoFinishSubTaskHandlerUser = (params) => {
+    getNoFinishSubTaskHandlerUser(params).then(
+      (resp) =>
+        runInAction(() => {
+          this.noAuthIds = resp.data;
+        }),
+      (resp) =>
+        runInAction(() => {
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  withdrawOrder = (params, successCallBack) => {
+    this.changeLoading('withdraw', true);
+    withdrawDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          prompt.success(
+            langUtil.t(
+              intl
+                .get('21617279-97dc-4169-b5ef-fdde0c90df62')
+                .d('转派撤回成功！')
+            )
+          );
+          this.changeLoading('withdraw', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('withdraw', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  saveDraft = (params, successCallBack) => {
+    this.changeLoading('saveDraft', true);
+    draftDetailsOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          this.changeLoading('saveDraft', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('saveDraft', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  commitOriginalHandler = (params, successCallBack) => {
+    this.changeLoading('commitOriginalHandler', true);
+    submitOriginHandle(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          this.changeLoading('commitOriginalHandler', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('commitOriginalHandler', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  deleteOrder = (params, successCallBack) => {
+    deleteOrder(params).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          this.changeLoading('delete', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('delete', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  delDraft = (id, successCallBack) => {
+    delDraft(id).then(
+      (resp) =>
+        runInAction(() => {
+          successCallBack && successCallBack();
+          this.changeLoading('delete', false);
+        }),
+      (resp) =>
+        runInAction(() => {
+          this.changeLoading('delete', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  @action
+  changeLoading = (type, status) => {
+    eventManager.emit('on-footer-loading', status)
+    this.loadings = {
+      ...this.loadings,
+      [type]: status,
+    };
+  };
+
+  // 字段联动、上传文件等时，保存草稿、提交、更新按钮loading，避免数据不同步
+  @action
+  loadingAsync = (mode) => {
+    if (mode) {
+      this.changeLoading('submit', true);
+      this.changeLoading('update', true);
+      this.changeLoading('saveDraft', true);
+    } else {
+      this.changeLoading('submit', false);
+      this.changeLoading('update', false);
+      this.changeLoading('saveDraft', false);
+    }
+  };
+
+  @action doCheckIsK2Process = (workOrderId) => {
+    checkIsK2Process(workOrderId).then(
+      (resp) =>
+        runInAction(() => {
+          // successCallBack && successCallBack();
+          // this.changeLoading('saveDraft', false);
+          const { code, data } = resp;
+          if (code === '100000' && data) {
+            this.isK2Flow = true;
+            this.transK2Url = data;
+          } else {
+            this.isK2Flow = false;
+            this.transK2Url = '';
+          }
+        }),
+      (resp) =>
+        runInAction(() => {
+          // this.changeLoading('saveDraft', false);
+          prompt.error(resp.msg);
+        })
+    );
+  };
+
+  /**
+   * 判断是否有一个状态正在loading
+   * @returns
+   */
+  @action
+  verdictAnyLoading = () => {
+    let flag = false;
+    Object.keys(this.loadings || {})?.forEach((key) => {
+      if (this.loadings[key]) flag = true;
+    });
+    return flag;
+  };
+
+  fetchRCAList = ({ bizKey }, successCallBack) => { 
+    getListData({
+      viewId: 'MY_AUTHORIZED',
+      pageSize: 30,
+      currentPage: 1,
+      queryData: [{
+        value: bizKey,
+        fieldKey: "bizKey",
+        type: "INPUT",
+        preNum: null
+      }]
+    }, false).then(resp => {
+      successCallBack && successCallBack(resp?.data.records);
+    }).then(resp => {
+      prompt.error(resp.msg);
+    })
+  }
 }
